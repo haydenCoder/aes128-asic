@@ -64,20 +64,13 @@ module aes_inv_round (
     output wire [127:0] state_out
 );
 
-    wire [127:0] after_addkey;
-    wire [127:0] after_inv_mixcolumns;
+    // FIPS-197 InvCipher round: InvShiftRows -> InvSubBytes -> AddRoundKey -> InvMixColumns
     wire [127:0] after_inv_shiftrows;
     wire [127:0] after_inv_sbox;
-
-    assign after_addkey = state_in ^ round_key;
-
-    aes_inv_mix_columns u_inv_mixcolumns (
-        .state_in(after_addkey),
-        .state_out(after_inv_mixcolumns)
-    );
+    wire [127:0] after_addkey;
 
     aes_inv_shift_rows u_inv_shiftrows (
-        .state_in(after_inv_mixcolumns),
+        .state_in(state_in),
         .state_out(after_inv_shiftrows)
     );
 
@@ -86,7 +79,12 @@ module aes_inv_round (
         .data_out(after_inv_sbox)
     );
 
-    assign state_out = after_inv_sbox;
+    assign after_addkey = after_inv_sbox ^ round_key;
+
+    aes_inv_mix_columns u_inv_mixcolumns (
+        .state_in(after_addkey),
+        .state_out(state_out)
+    );
 
 endmodule
 
@@ -99,14 +97,12 @@ module aes_inv_final_round (
     output wire [127:0] state_out
 );
 
-    wire [127:0] after_addkey;
+    // FIPS-197 final inverse round: InvShiftRows -> InvSubBytes -> AddRoundKey (no InvMixColumns)
     wire [127:0] after_inv_shiftrows;
     wire [127:0] after_inv_sbox;
 
-    assign after_addkey = state_in ^ round_key;
-
     aes_inv_shift_rows u_inv_shiftrows (
-        .state_in(after_addkey),
+        .state_in(state_in),
         .state_out(after_inv_shiftrows)
     );
 
@@ -115,7 +111,7 @@ module aes_inv_final_round (
         .data_out(after_inv_sbox)
     );
 
-    assign state_out = after_inv_sbox;
+    assign state_out = after_inv_sbox ^ round_key;
 
 endmodule
 
@@ -194,7 +190,7 @@ module aes128_core (
     wire [127:0] dec_final_out;
     aes_inv_final_round u_dec_final (
         .state_in(state),
-        .round_key(rk10),
+        .round_key(rk0),
         .state_out(dec_final_out)
     );
 
@@ -207,8 +203,9 @@ module aes128_core (
             running <= 1'b0;
         end else begin
             if (start) begin
-                state   <= data_in ^ rk0;
-                round   <= decrypt ? 4'd10 : 4'd1;
+                // Decryption starts with AddRoundKey(rk10); encryption with rk0
+                state   <= data_in ^ (decrypt ? rk10 : rk0);
+                round   <= decrypt ? 4'd9 : 4'd1;
                 done    <= 1'b0;
                 running <= 1'b1;
             end else if (running) begin
@@ -222,14 +219,11 @@ module aes128_core (
                         running <= 1'b0;
                     end
                 end else begin
-                    if (round == 4'd10) begin
-                        state <= dec_final_out;
-                        round <= 4'd9;
-                    end else if (round > 4'd0) begin
+                    if (round > 4'd0) begin
                         state <= dec_round_out;
                         round <= round - 1'b1;
                     end else begin
-                        data_out <= state;
+                        data_out <= dec_final_out;
                         done     <= 1'b1;
                         running  <= 1'b0;
                     end

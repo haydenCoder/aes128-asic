@@ -145,12 +145,12 @@ module aes_inv_sbox (
             8'hdc: data_out = 8'h93; 8'hdd: data_out = 8'hc9; 8'hde: data_out = 8'h9c; 8'hdf: data_out = 8'hef;
             8'he0: data_out = 8'ha0; 8'he1: data_out = 8'he0; 8'he2: data_out = 8'h3b; 8'he3: data_out = 8'h4d;
             8'he4: data_out = 8'hae; 8'he5: data_out = 8'h2a; 8'he6: data_out = 8'hf5; 8'he7: data_out = 8'hb0;
-            8'he8: data_out = 8'hc8; 8'he9: data_out = 8'hb8; 8'hea: data_out = 8'h7e; 8'heb: data_out = 8'h53;
-            8'hec: data_out = 8'h4b; 8'hed: data_out = 8'h3c; 8'hee: data_out = 8'hf5; 8'hef: data_out = 8'hc8;
-            8'hf0: data_out = 8'h1a; 8'hf1: data_out = 8'h3e; 8'hf2: data_out = 8'h47; 8'hf3: data_out = 8'h3c;
-            8'hf4: data_out = 8'ha0; 8'hf5: data_out = 8'h0f; 8'hf6: data_out = 8'h41; 8'hf7: data_out = 8'h3b;
-            8'hf8: data_out = 8'h5c; 8'hf9: data_out = 8'h33; 8'hfa: data_out = 8'h55; 8'hfb: data_out = 8'h26;
-            8'hfc: data_out = 8'h6e; 8'hfd: data_out = 8'h88; 8'hfe: data_out = 8'h5d; 8'hff: data_out = 8'h4c;
+            8'he8: data_out = 8'hc8; 8'he9: data_out = 8'heb; 8'hea: data_out = 8'hbb; 8'heb: data_out = 8'h3c;
+            8'hec: data_out = 8'h83; 8'hed: data_out = 8'h53; 8'hee: data_out = 8'h99; 8'hef: data_out = 8'h61;
+            8'hf0: data_out = 8'h17; 8'hf1: data_out = 8'h2b; 8'hf2: data_out = 8'h04; 8'hf3: data_out = 8'h7e;
+            8'hf4: data_out = 8'hba; 8'hf5: data_out = 8'h77; 8'hf6: data_out = 8'hd6; 8'hf7: data_out = 8'h26;
+            8'hf8: data_out = 8'he1; 8'hf9: data_out = 8'h69; 8'hfa: data_out = 8'h14; 8'hfb: data_out = 8'h63;
+            8'hfc: data_out = 8'h55; 8'hfd: data_out = 8'h21; 8'hfe: data_out = 8'h0c; 8'hff: data_out = 8'h7d;
             default: data_out = 8'h00;
         endcase
     end

@@ -45,7 +45,7 @@ pinout:
   # Bidirectional pins (uio_in/out[7:0])
   uio[0]: "START"
   uio[1]: "MODE"          # 0=encrypt, 1=decrypt
-  uio[2]: "KEY_DATA_SEL"  # 0=load key, 1=load data
+  uio[2]: ""               # reserved (unused)
   uio[3]: ""
   uio[4]: ""
   uio[5]: ""

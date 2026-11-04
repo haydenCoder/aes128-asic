@@ -132,6 +132,9 @@ module tt_um_haydencoder_aes128 (
                     out_byte_cnt <= out_byte_cnt + 1'b1;
                     result_reg   <= {result_reg[119:0], 8'd0};
                 end
+                default: begin
+                    // hold current values
+                end
             endcase
         end
     end
@@ -174,6 +177,6 @@ module tt_um_haydencoder_aes128 (
 
     assign uio_oe = 8'b11000001;
 
-    wire _unused = &{ena, uio_in[7:3], 1'b0};
+    wire _unused = &{ena, uio_in[7:2], 1'b0};
 
 endmodule
