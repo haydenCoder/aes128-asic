@@ -8,7 +8,7 @@ You can also include images in this folder and reference them in the markdown. E
 
 ## How it works
 
-The project is an **AES-128 encryption core** (128-bit block, 128-bit key, 10 rounds per FIPS-197), byte-serial and area-optimized, wrapped for Tiny Tapeout as `tt_um_haydencoder_aes128` in a **2×1 tile** on GF180MCU.
+The project is an **AES-128 encryption core** (128-bit block, 128-bit key, 10 rounds per FIPS-197), byte-serial and area-optimized, wrapped for Tiny Tapeout as `tt_um_haydencoder_aes128` in a **1×2 tile** on GF180MCU.
 
 **Datapath** (`src/aes_core.v`, module `aes128_core`):
 
