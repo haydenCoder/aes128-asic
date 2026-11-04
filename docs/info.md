@@ -58,7 +58,7 @@ The test suite runs all **4 NIST FIPS-197 AES-128 test vectors** through the ful
 
 | Image | Description |
 |-------|-------------|
-| GDS visualizer link | Full chip layout rendered by the CI GDS workflow (`gds.yaml`) — not committed to the repo: https://gds-viewer.tinytapeout.com/?pdk=gf180mcu&model=https%3A%2F%2FhaydenCoder.github.io%2Faes128-asic%2F%2Ftinytapeout.oas |
+| `gds-layout.png` | Full tile layout rendered by the CI GDS workflow (`gds.yaml`, commit 636a855); interactive: https://gds-viewer.tinytapeout.com/?pdk=gf180mcu&model=https%3A%2F%2FhaydenCoder.github.io%2Faes128-asic%2F%2Ftinytapeout.oas |
 | `waveform.png` | Simulated timing diagram (iverilog VCD → matplotlib) of NIST test vector 1 encryption |
 | `nist-waveforms.png` | All 4 NIST test vectors, simulated encryption — all PASS |
 | `schematic.png` | Yosys `show` schematic of the byte-serial `aes128_core` |
