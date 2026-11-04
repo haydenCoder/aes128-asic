@@ -1,0 +1,20 @@
+name: GDS
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  gds:
+    name: GDS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build GDS
+        uses: TinyTapeout/tt-gds-action@v1
+        with:
+          design-name: aes128-asic
+          pdk: gf180mcu
+          pdk-root: /opt/pdk
