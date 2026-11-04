@@ -1,120 +1,23 @@
-`default_nettype none
-
-module aes_round (
-    input  wire [127:0] state_in,
-    input  wire [127:0] round_key,
-    output wire [127:0] state_out
-);
-
-    wire [127:0] after_sbox;
-    wire [127:0] after_shiftrows;
-    wire [127:0] after_mixcolumns;
-
-    aes_sbox_16 u_sbox (
-        .data_in(state_in),
-        .data_out(after_sbox)
-    );
-
-    aes_shift_rows_correct u_shiftrows (
-        .state_in(after_sbox),
-        .state_out(after_shiftrows)
-    );
-
-    aes_mix_columns u_mixcolumns (
-        .state_in(after_shiftrows),
-        .state_out(after_mixcolumns)
-    );
-
-    assign state_out = after_mixcolumns ^ round_key;
-
-endmodule
-
-
-`default_nettype none
-
-module aes_final_round (
-    input  wire [127:0] state_in,
-    input  wire [127:0] round_key,
-    output wire [127:0] state_out
-);
-
-    wire [127:0] after_sbox;
-    wire [127:0] after_shiftrows;
-
-    aes_sbox_16 u_sbox (
-        .data_in(state_in),
-        .data_out(after_sbox)
-    );
-
-    aes_shift_rows_correct u_shiftrows (
-        .state_in(after_sbox),
-        .state_out(after_shiftrows)
-    );
-
-    assign state_out = after_shiftrows ^ round_key;
-
-endmodule
-
-
-`default_nettype none
-
-module aes_inv_round (
-    input  wire [127:0] state_in,
-    input  wire [127:0] round_key,
-    output wire [127:0] state_out
-);
-
-    // FIPS-197 InvCipher round: InvShiftRows -> InvSubBytes -> AddRoundKey -> InvMixColumns
-    wire [127:0] after_inv_shiftrows;
-    wire [127:0] after_inv_sbox;
-    wire [127:0] after_addkey;
-
-    aes_inv_shift_rows u_inv_shiftrows (
-        .state_in(state_in),
-        .state_out(after_inv_shiftrows)
-    );
-
-    aes_inv_sbox_16 u_inv_sbox (
-        .data_in(after_inv_shiftrows),
-        .data_out(after_inv_sbox)
-    );
-
-    assign after_addkey = after_inv_sbox ^ round_key;
-
-    aes_inv_mix_columns u_inv_mixcolumns (
-        .state_in(after_addkey),
-        .state_out(state_out)
-    );
-
-endmodule
-
-
-`default_nettype none
-
-module aes_inv_final_round (
-    input  wire [127:0] state_in,
-    input  wire [127:0] round_key,
-    output wire [127:0] state_out
-);
-
-    // FIPS-197 final inverse round: InvShiftRows -> InvSubBytes -> AddRoundKey (no InvMixColumns)
-    wire [127:0] after_inv_shiftrows;
-    wire [127:0] after_inv_sbox;
-
-    aes_inv_shift_rows u_inv_shiftrows (
-        .state_in(state_in),
-        .state_out(after_inv_shiftrows)
-    );
-
-    aes_inv_sbox_16 u_inv_sbox (
-        .data_in(after_inv_shiftrows),
-        .data_out(after_inv_sbox)
-    );
-
-    assign state_out = after_inv_sbox ^ round_key;
-
-endmodule
-
+/*
+ * Copyright (c) 2026 Chung Hon Ting
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * AES-128 encryption core, byte-serial implementation for a Tiny Tapeout tile.
+ *
+ * Area-optimized: one shared compact (Canright) S-box time-multiplexed over
+ * state bytes and key schedule, SubBytes via 128-bit rotation, in-place
+ * round-key updates through a 32-bit g register. ~285 flops + ~1.5K gates.
+ *
+ * Interface (byte-serial load, MSB-first):
+ *   key_we/key_byte   : shift one key byte into the round-key register
+ *   data_we/data_byte : shift one plaintext byte into the state register
+ *   start             : pulse -> state <= state ^ rk (round 0 AddRoundKey),
+ *                       then 10 rounds of SubBytes/ShiftRows/MixColumns/AddRoundKey
+ *   done              : 1-cycle pulse when the ciphertext is in data_out
+ *   out_shift/out_byte: while asserted, shifts the result out MSB-first
+ *
+ * Latency: 1 + 10*(8 key + 16 sub + 1 mix) = 251 cycles per operation.
+ */
 
 `default_nettype none
 
@@ -122,114 +25,161 @@ module aes128_core (
     input  wire         clk,
     input  wire         rst_n,
     input  wire         start,
-    input  wire         decrypt,
-    input  wire [127:0] key,
-    input  wire [127:0] data_in,
-    output reg  [127:0] data_out,
-    output reg          done
+    input  wire         key_we,
+    input  wire [7:0]   key_byte,
+    input  wire         data_we,
+    input  wire [7:0]   data_byte,
+    input  wire         out_shift,
+    output wire [7:0]   out_byte,
+    output wire [127:0] data_out,
+    output wire         done,
+    output wire         busy
 );
 
-    wire [127:0] rk0, rk1, rk2, rk3, rk4, rk5, rk6, rk7, rk8, rk9, rk10;
-    aes_key_expansion_comb u_key_exp (
-        .cipher_key(key),
-        .rk0(rk0), .rk1(rk1), .rk2(rk2), .rk3(rk3), .rk4(rk4),
-        .rk5(rk5), .rk6(rk6), .rk7(rk7), .rk8(rk8), .rk9(rk9), .rk10(rk10)
-    );
+    localparam PH_IDLE = 3'd0;
+    localparam PH_KEY  = 3'd1;   // round-key update for current round (8 cycles)
+    localparam PH_SUB  = 3'd2;   // SubBytes via rotation, one byte per cycle (16 cycles)
+    localparam PH_MIX  = 3'd3;   // ShiftRows + MixColumns + AddRoundKey (1 cycle)
 
-    reg [3:0]  round;
     reg [127:0] state;
+    reg [127:0] rk;              // round key (key schedule sliding window)
+    reg [31:0]  g;               // SubWord(RotWord(w3)) ^ Rcon, assembled over 4 cycles
+    reg [3:0]   round;           // 1..10
+    reg [4:0]   cnt;
+    reg [2:0]   phase;
     reg         running;
+    reg         done_r;
 
-    wire [127:0] round_key_enc;
-    wire [127:0] round_key_dec;
+    // shared S-box: key phase reads rotated last word, sub phase reads top byte
+    wire [7:0] sbox_in;
+    wire [7:0] sbox_out;
+    assign sbox_in = (phase == PH_KEY) ?
+                        ((cnt == 5'd0) ? rk[23:16] :
+                         (cnt == 5'd1) ? rk[15:8]  :
+                         (cnt == 5'd2) ? rk[7:0]   : rk[31:24]) :
+                        state[127:120];
 
-    assign round_key_enc = (round == 4'd1)  ? rk1  :
-                           (round == 4'd2)  ? rk2  :
-                           (round == 4'd3)  ? rk3  :
-                           (round == 4'd4)  ? rk4  :
-                           (round == 4'd5)  ? rk5  :
-                           (round == 4'd6)  ? rk6  :
-                           (round == 4'd7)  ? rk7  :
-                           (round == 4'd8)  ? rk8  :
-                           (round == 4'd9)  ? rk9  :
-                           (round == 4'd10) ? rk10 : 128'd0;
-
-    assign round_key_dec = (round == 4'd10) ? rk10 :
-                           (round == 4'd9)  ? rk9  :
-                           (round == 4'd8)  ? rk8  :
-                           (round == 4'd7)  ? rk7  :
-                           (round == 4'd6)  ? rk6  :
-                           (round == 4'd5)  ? rk5  :
-                           (round == 4'd4)  ? rk4  :
-                           (round == 4'd3)  ? rk3  :
-                           (round == 4'd2)  ? rk2  :
-                           (round == 4'd1)  ? rk1  :
-                           (round == 4'd0)  ? rk0  : 128'd0;
-
-    wire [127:0] enc_round_out;
-    aes_round u_enc_round (
-        .state_in(state),
-        .round_key(round_key_enc),
-        .state_out(enc_round_out)
+    aes_sbox u_sbox (
+        .data_in (sbox_in),
+        .data_out(sbox_out)
     );
 
-    wire [127:0] enc_final_out;
-    aes_final_round u_enc_final (
-        .state_in(state),
-        .round_key(rk10),
-        .state_out(enc_final_out)
+    // Rcon for round 1..10
+    function [7:0] rcon;
+        input [3:0] r;
+        case (r)
+            4'd1:  rcon = 8'h01;
+            4'd2:  rcon = 8'h02;
+            4'd3:  rcon = 8'h04;
+            4'd4:  rcon = 8'h08;
+            4'd5:  rcon = 8'h10;
+            4'd6:  rcon = 8'h20;
+            4'd7:  rcon = 8'h40;
+            4'd8:  rcon = 8'h80;
+            4'd9:  rcon = 8'h1b;
+            4'd10: rcon = 8'h36;
+            default: rcon = 8'h00;
+        endcase
+    endfunction
+
+    wire [127:0] state_sr;
+    wire [127:0] state_mc;
+    aes_shift_rows_correct u_sr (
+        .state_in (state),
+        .state_out(state_sr)
+    );
+    aes_mix_columns u_mc (
+        .state_in (state_sr),
+        .state_out(state_mc)
     );
 
-    wire [127:0] dec_round_out;
-    aes_inv_round u_dec_round (
-        .state_in(state),
-        .round_key(round_key_dec),
-        .state_out(dec_round_out)
-    );
-
-    wire [127:0] dec_final_out;
-    aes_inv_final_round u_dec_final (
-        .state_in(state),
-        .round_key(rk0),
-        .state_out(dec_final_out)
-    );
+    assign data_out = state;
+    assign out_byte = state[127:120];
+    assign done     = done_r;
+    assign busy     = running;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            round   <= 4'd0;
             state   <= 128'd0;
-            data_out <= 128'd0;
-            done    <= 1'b0;
+            rk      <= 128'd0;
+            g       <= 32'd0;
+            round   <= 4'd0;
+            cnt     <= 5'd0;
+            phase   <= PH_IDLE;
             running <= 1'b0;
+            done_r  <= 1'b0;
         end else begin
+            done_r <= 1'b0;
+
+            // byte-serial load
+            if (key_we)  rk    <= {rk[119:0], key_byte};
+            if (data_we) state <= {state[119:0], data_byte};
+
+            // output shift (result already latched in state)
+            if (out_shift) state <= {state[119:0], 8'h00};
+
             if (start) begin
-                // Decryption starts with AddRoundKey(rk10); encryption with rk0
-                state   <= data_in ^ (decrypt ? rk10 : rk0);
-                round   <= decrypt ? 4'd9 : 4'd1;
-                done    <= 1'b0;
+                state   <= state ^ rk;   // round 0 AddRoundKey (rk holds the key)
+                round   <= 4'd1;
+                cnt     <= 5'd0;
+                phase   <= PH_KEY;
                 running <= 1'b1;
+                done_r  <= 1'b0;
             end else if (running) begin
-                if (!decrypt) begin
-                    if (round < 4'd10) begin
-                        state <= enc_round_out;
-                        round <= round + 1'b1;
-                    end else begin
-                        data_out <= enc_final_out;
-                        done    <= 1'b1;
-                        running <= 1'b0;
+                case (phase)
+                    PH_KEY: begin
+                        if (cnt < 5'd4) begin
+                            // assemble g = SubWord(RotWord(w3)) ^ Rcon, MSB first
+                            g <= {g[23:0], sbox_out ^ ((cnt == 5'd0) ? rcon(round) : 8'h00)};
+                        end else begin
+                            // in-place round-key update: new wj = old wj ^ new w(j-1)
+                            case (cnt)
+                                5'd4:  rk[127:96] <= rk[127:96] ^ g;
+                                5'd5:  rk[95:64]  <= rk[95:64]  ^ rk[127:96];
+                                5'd6:  rk[63:32]  <= rk[63:32]  ^ rk[95:64];
+                                5'd7:  rk[31:0]   <= rk[31:0]   ^ rk[63:32];
+                                default: ;
+                            endcase
+                        end
+                        if (cnt == 5'd7) begin
+                            cnt   <= 5'd0;
+                            phase <= PH_SUB;
+                        end else begin
+                            cnt <= cnt + 1'b1;
+                        end
                     end
-                end else begin
-                    if (round > 4'd0) begin
-                        state <= dec_round_out;
-                        round <= round - 1'b1;
-                    end else begin
-                        data_out <= dec_final_out;
-                        done     <= 1'b1;
-                        running  <= 1'b0;
+
+                    PH_SUB: begin
+                        // SubBytes via rotation: 16 x 8-bit rotations = identity order
+                        state <= {state[119:0], sbox_out};
+                        if (cnt == 5'd15) begin
+                            cnt   <= 5'd0;
+                            phase <= PH_MIX;
+                        end else begin
+                            cnt <= cnt + 1'b1;
+                        end
                     end
-                end
+
+                    PH_MIX: begin
+                        if (round < 4'd10) begin
+                            state <= state_mc ^ rk;   // ShiftRows+MixColumns+AddRoundKey
+                            round <= round + 1'b1;
+                            cnt   <= 5'd0;
+                            phase <= PH_KEY;
+                        end else begin
+                            state   <= state_sr ^ rk; // final round: no MixColumns
+                            running <= 1'b0;
+                            done_r  <= 1'b1;
+                            phase   <= PH_IDLE;
+                        end
+                    end
+
+                    default: phase <= PH_IDLE;
+                endcase
             end
         end
     end
 
 endmodule
+
+`default_nettype none

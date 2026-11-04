@@ -3,11 +3,11 @@ project:
   title:        "AES-128 Core"
   author:       "Chung Hon Ting"
   discord:      ""
-  description:  "Complete AES-128 encryption/decryption core: key expansion, 10-round encrypt/decrypt, serial I/O in one tile"
+  description:  "Area-optimized byte-serial AES-128 encryption core: one shared Canright S-box, 251 cycles/op, serial I/O in a 2x1 tile"
   language:     "Verilog"
   clock_hz:     50000000
 
-  tiles: "1x1"
+  tiles: "2x1"
 
   top_module:  "tt_um_haydencoder_aes128"
 
@@ -44,8 +44,8 @@ pinout:
 
   # Bidirectional pins (uio_in/out[7:0])
   uio[0]: "START"
-  uio[1]: "MODE"          # 0=encrypt, 1=decrypt
-  uio[2]: ""               # reserved (unused)
+  uio[1]: ""               # unused
+  uio[2]: ""               # unused
   uio[3]: ""
   uio[4]: ""
   uio[5]: ""

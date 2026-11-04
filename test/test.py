@@ -5,8 +5,9 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles
 
-# AES-128 test vectors, verified against openssl (enc + dec + roundtrip all pass).
-# For each vector: encrypt(plaintext) == ciphertext AND decrypt(ciphertext) == plaintext.
+# AES-128 encryption test vectors, verified against openssl.
+# The taped-out hardware implements encryption (byte-serial core, one tile);
+# decryption was verified in RTL simulation of the earlier parallel core.
 TEST_VECTORS = [
     {"name": "NIST Test 1",
      "key": bytes.fromhex("000102030405060708090a0b0c0d0e0f"),
@@ -208,19 +209,10 @@ async def test_aes_vectors(dut):
     cocotb.start_soon(clock.start())
     await ClockCycles(dut.clk, 2)  # let the clock get running
 
-    # Encrypt AND decrypt every vector
+    # Encrypt every vector through the full wrapper (START -> 16 key bytes
+    # -> 16 data bytes -> BUSY -> 16 ciphertext bytes, MSB first)
     for tv in TEST_VECTORS:
         await run_aes(dut, tv["key"], tv["plaintext"], tv["ciphertext"],
                       decrypt=False, test_name=tv["name"] + " encrypt")
-        await run_aes(dut, tv["key"], tv["ciphertext"], tv["plaintext"],
-                      decrypt=True, test_name=tv["name"] + " decrypt")
 
-    # Encrypt -> decrypt round-trip: feed the ACTUAL ciphertext output of the
-    # encrypt run back through decrypt and require the original plaintext.
-    tv = TEST_VECTORS[0]
-    ct = await run_aes(dut, tv["key"], tv["plaintext"], tv["ciphertext"],
-                       decrypt=False, test_name="roundtrip encrypt")
-    pt = await run_aes(dut, tv["key"], ct, tv["plaintext"],
-                       decrypt=True, test_name="roundtrip decrypt")
-    assert pt == tv["plaintext"], f"Round-trip failed: got {pt.hex()}, expected {tv['plaintext'].hex()}"
-    dut._log.info(f"ROUND-TRIP PASSED: {tv['plaintext'].hex()} -> {ct.hex()} -> {pt.hex()}")
+    dut._log.info("ALL VECTORS PASSED")
