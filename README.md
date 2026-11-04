@@ -20,7 +20,7 @@ This is my custom AES-128 ASIC I made to learn how to take a chip from RTL to si
 - **~297 cycles per encryption** (1 + 9×(8 key + 1 ShiftRows + 16 SubBytes + 4 MixColumns + 1 AddRoundKey) + 26)
 - **Serial I/O protocol** — 8-bit `ui_in` for byte streaming, 8-bit `uo_out` for output
 - **1×2 tile** on GF180MCU (~340×320 µm core area; placed utilization well under the 60% density cap)
-- **50 MHz target** — static timing on GF180MCU is verified by the CI GDS workflow (`gds.yaml`)
+- **20 MHz target** — static timing on GF180MCU is verified by the CI GDS workflow (`gds.yaml`)
 - Decryption was fully implemented and verified (openssl round-trip, 4/4 NIST vectors) in the earlier parallel-core version in RTL simulation; the taped-out hardware is encrypt-only to fit the tile budget
 
 ## How It Works

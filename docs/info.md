@@ -30,7 +30,7 @@ Decryption was implemented and verified (all 4 NIST vectors + openssl round-trip
 4. **Wait** — `BUSY` (`uio_out[6]`) is high while the core processes (~297 cycles).
 5. **Read output** — `DATA_VALID` (`uio_out[7]`) goes high and 16 ciphertext bytes appear on `uo_out`, one per clock, **MSB first**.
 
-`uio_in[7:1]` are unused. Timing target is 50 MHz; static timing on GF180MCU is verified by the CI GDS workflow, not locally.
+`uio_in[7:1]` are unused. Timing target is 20 MHz; static timing on GF180MCU is verified by the CI GDS workflow, not locally.
 
 ## How to test
 

@@ -5,7 +5,7 @@ project:
   discord:      ""
   description:  "Area-optimized byte-serial AES-128 encryption core: one shared Canright S-box, 297 cycles/op, serial I/O in a 1x2 tile"
   language:     "Verilog"
-  clock_hz:     50000000
+  clock_hz:     20000000
 
   tiles: "1x2"
 
