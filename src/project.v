@@ -39,8 +39,6 @@ module tt_um_haydencoder_aes128 (
     reg [2:0] state, next_state;
     reg [4:0] byte_cnt;
     reg [3:0] out_byte_cnt;
-    reg       key_loaded;
-    reg       data_loaded;
     reg       start_r;
 
     wire        core_done;
@@ -68,31 +66,21 @@ module tt_um_haydencoder_aes128 (
             state        <= IDLE;
             byte_cnt     <= 5'd0;
             out_byte_cnt <= 4'd0;
-            key_loaded   <= 1'b0;
-            data_loaded  <= 1'b0;
             start_r      <= 1'b0;
         end else begin
             state <= next_state;
 
             case (state)
-                LOAD_KEY: begin
-                    byte_cnt <= byte_cnt + 1'b1;
-                    if (byte_cnt == 5'd15) key_loaded <= 1'b1;
-                end
-                LOAD_DATA: begin
-                    byte_cnt <= byte_cnt + 1'b1;
-                    if (byte_cnt == 5'd15) data_loaded <= 1'b1;
-                end
-                OUTPUT: begin
-                    out_byte_cnt <= out_byte_cnt + 1'b1;
-                end
+                LOAD_KEY:  byte_cnt <= byte_cnt + 1'b1;
+                LOAD_DATA: byte_cnt <= byte_cnt + 1'b1;
+                OUTPUT:    out_byte_cnt <= out_byte_cnt + 1'b1;
                 default: begin
                     byte_cnt     <= 5'd0;
                     out_byte_cnt <= 4'd0;
                 end
             endcase
 
-            // reset byte_cnt when entering LOAD_DATA
+            // reset byte_cnt on the LOAD_KEY -> LOAD_DATA transition
             if (state == LOAD_KEY && next_state == LOAD_DATA)
                 byte_cnt <= 5'd0;
 
@@ -104,18 +92,12 @@ module tt_um_haydencoder_aes128 (
     always @* begin
         next_state = state;
         case (state)
-            IDLE: begin
-                if (uio_in[0]) begin
-                    if (!key_loaded)      next_state = LOAD_KEY;
-                    else if (!data_loaded) next_state = LOAD_DATA;
-                    else                   next_state = PROCESS;
-                end
-            end
-            LOAD_KEY:  if (key_loaded)  next_state = LOAD_DATA;
-            LOAD_DATA: if (data_loaded) next_state = PROCESS;
-            PROCESS:   if (core_done)   next_state = OUTPUT;
-            OUTPUT:    if (out_byte_cnt == 4'd15) next_state = IDLE;
-            default:                     next_state = IDLE;
+            IDLE:      if (uio_in[0])                  next_state = LOAD_KEY;
+            LOAD_KEY:  if (byte_cnt == 5'd15)           next_state = LOAD_DATA;
+            LOAD_DATA: if (byte_cnt == 5'd15)           next_state = PROCESS;
+            PROCESS:   if (core_done)                  next_state = OUTPUT;
+            OUTPUT:    if (out_byte_cnt == 4'd15)       next_state = IDLE;
+            default:                                    next_state = IDLE;
         endcase
     end
 

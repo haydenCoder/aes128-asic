@@ -39,13 +39,12 @@ def get_uio_out(dut):
     return int(dut.uio_out.value)
 
 def get_state(dut):
-    return int(dut.user_project.state.value) if hasattr(dut.user_project, 'state') else 0
-
-def get_key_reg(dut):
-    return int(dut.user_project.key_reg.value) if hasattr(dut.user_project, 'key_reg') else 0
-
-def get_data_reg(dut):
-    return int(dut.user_project.data_reg.value) if hasattr(dut.user_project, 'data_reg') else 0
+    # Internal FSM state is not reliably readable in the gate-level netlist
+    # (yosys renames it), so the driver below uses protocol timing only.
+    try:
+        return int(dut.user_project.state.value)
+    except Exception:
+        return -1
 
 async def send_byte(dut, byte_val):
     dut.ui_in.value = byte_val
@@ -117,79 +116,34 @@ async def read_output_bytes(dut, num_bytes=16):
 async def run_aes(dut, key, data_in, expected_out, decrypt=False, test_name=""):
     dut._log.info(f"Running AES {'decrypt' if decrypt else 'encrypt'} test: {test_name}")
 
-    # Full reset before every operation (clears key_loaded/data_loaded so the
-    # first start pulse re-latches the mode bit)
+    # Full reset before every operation (clears key_loaded/data_loaded)
     dut.rst_n.value = 0
     dut.ena.value = 1
     dut.ui_in.value = 0
     set_uio_in(dut, 0)
     await ClockCycles(dut.clk, 30)
     dut.rst_n.value = 1
-    await ClockCycles(dut.clk, 15)
+    await ClockCycles(dut.clk, 5)
 
-    # Verify IDLE with extra settling
-    for _ in range(30):
-        if get_state(dut) == 0:
-            await ClockCycles(dut.clk, 2)  # extra settle cycles
-            break
-        await ClockCycles(dut.clk, 1)
-    else:
-        dut._log.error(f"Failed to reach IDLE after reset, state={get_state(dut)}")
-        assert False, "Failed to reach IDLE after reset"
-
-    dut._log.info(f"Post-reset: state={get_state(dut)}, key_reg={get_key_reg(dut):032x}, data_reg={get_data_reg(dut):032x}")
-
-    # Pulse start; uio_in bit 1 on this pulse selects decrypt
+    # Pulse start (IDLE -> LOAD_KEY on the next edge)
     await pulse_start(dut, decrypt=decrypt)
 
-    # Wait for LOAD_KEY, then IMMEDIATELY send key bytes (NO settle delay!)
-    await wait_for_state(dut, 1)
-    dut._log.info(f"LOAD_KEY: state={get_state(dut)}, key_reg={get_key_reg(dut):032x}")
-
-    # Load key - NO settle delay, send immediately
+    # Stream 16 key bytes then 16 data bytes on consecutive cycles; the
+    # wrapper consumes exactly one byte per cycle in LOAD_KEY/LOAD_DATA.
     await send_bytes(dut, key)
-    dut._log.info(f"After key load: key_reg={get_key_reg(dut):032x}")
-
-    # Wait for LOAD_DATA
-    await wait_for_state(dut, 2)
-    dut._log.info(f"LOAD_DATA: state={get_state(dut)}")
-
-    # Load data - NO settle delay
     await send_bytes(dut, data_in)
-    dut._log.info(f"After data load: data_reg={get_data_reg(dut):032x}")
 
-    # Wait for PROCESS
-    await wait_for_state(dut, 3)
-    dut._log.info(f"PROCESS: state={get_state(dut)}")
+    # Wait for the core to finish (~300 cycles) and DATA_VALID to rise
+    dv = await wait_for_data_valid(dut, max_cycles=5000)
+    assert dv, "Timeout waiting for DATA_VALID"
+    dut._log.info("DATA_VALID seen")
 
-    # Wait for completion
-    for cycle in range(50):
-        await ClockCycles(dut.clk, 1)
-        uio_out_val = get_uio_out(dut)
-        data_valid = (uio_out_val >> 7) & 1
-        busy = (uio_out_val >> 6) & 1
-        if data_valid:
-            dut._log.info(f"DATA_VALID at cycle {cycle}")
-            break
-        if not busy and cycle > 5:
-            dut._log.info(f"BUSY low at cycle {cycle}")
-            break
-
-    # Read output
+    # Read 16 ciphertext bytes, MSB first
     output = await read_output_bytes(dut, 16)
 
-    # Wait for busy low
+    # Wait for busy low (back to IDLE)
     success = await wait_for_busy_low(dut, max_cycles=5000)
     assert success, "Timeout waiting for busy low"
-
-    # Verify IDLE
-    for _ in range(20):
-        if get_state(dut) == 0:
-            break
-        await ClockCycles(dut.clk, 1)
-    else:
-        dut._log.error(f"Failed to return to IDLE, state={get_state(dut)}")
-        assert False, "Failed to return to IDLE"
 
     dut._log.info(f"Expected: {expected_out.hex()}")
     dut._log.info(f"Got:      {output.hex()}")
