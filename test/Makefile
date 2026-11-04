@@ -3,7 +3,7 @@
 
 # defaults
 SIM ?= icarus
-FST ?= -fst # Use more efficient FST format
+VCD ?= -vcd # Use VCD format for waveform capture
 TOPLEVEL_LANG ?= verilog
 SRC_DIR = $(PWD)/../src
 PROJECT_SOURCES = project.v sbox.v key_expansion.v shift_rows.v mix_columns.v aes_core.v aes_highperf.v
