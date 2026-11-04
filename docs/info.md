@@ -8,60 +8,60 @@ You can also include images in this folder and reference them in the markdown. E
 
 ## How it works
 
-The AES-128 core follows the standard FIPS-197 specification:
+The project is an **AES-128 encryption/decryption core** (128-bit block, 128-bit key, 10 rounds) implemented in Verilog per **FIPS-197**, wrapped for Tiny Tapeout as `tt_um_haydencoder_aes128` in a single 1×1 tile on GF180MCU.
 
-1. **Key Expansion** — Combinational key schedule generates 11 round keys (RK0–RK10) from the 128-bit cipher key using RotWord, SubWord, and Rcon
-2. **Initial AddRoundKey** — Plaintext XORed with RK0
-3. **9 Main Rounds** — Each round: SubBytes → ShiftRows → MixColumns → AddRoundKey
-4. **Final Round** — SubBytes → ShiftRows → AddRoundKey (no MixColumns)
-5. **Decryption** — Inverse operations in reverse order with inverse key schedule
+**Datapath** (`src/aes_core.v`):
 
-**Serial Protocol:**
-1. **Load Key** — Set `KEY_DATA_SEL=0`, send 16 bytes via `ui_in` (MSB first)
-2. **Load Data** — Set `KEY_DATA_SEL=1`, send 16 bytes via `ui_in` (MSB first)
-3. **Start** — Set `MODE` (0=encrypt, 1=decrypt), pulse `START` high for 1 cycle
-4. **Wait** — Poll `BUSY` until low
-5. **Read Output** — 16 bytes appear on `uo_out` with `DATA_VALID` high (MSB first)
+1. **Key expansion** — `aes_key_expansion_comb` (`src/key_expansion.v`) is fully combinational: it derives all 11 round keys (RK0–RK10) from the 128-bit cipher key using RotWord, SubWord and Rcon, with no external memory.
+2. **Encryption** — Initial AddRoundKey with RK0, then 9 main rounds of SubBytes → ShiftRows → MixColumns → AddRoundKey (`aes_round`), and a final round of SubBytes → ShiftRows → AddRoundKey without MixColumns (`aes_final_round`). SubBytes uses 16 parallel S-box instances (`src/sbox.v`).
+3. **Decryption** — The inverse cipher in reverse order: the FSM starts with AddRoundKey(RK10), runs `aes_inv_round` (InvShiftRows → InvSubBytes → AddRoundKey → InvMixColumns) for rounds 9→1, and finishes with `aes_inv_final_round` (InvShiftRows → InvSubBytes → ^RK0). The inverse S-box table is generated from the forward S-box.
+
+The core is serial: one 128-bit round per clock, so one operation takes ~12 clock cycles.
+
+**Serial byte I/O protocol** (8-bit `ui_in` / `uo_out`):
+
+1. **Start** — Set `MODE` (`uio_in[1]`: 0 = encrypt, 1 = decrypt) and pulse `START` (`uio_in[0]`) high for one clock.
+2. **Load key** — The wrapper automatically enters key-load: stream 16 key bytes on `ui_in`, one per clock, **MSB first**.
+3. **Load data** — Then stream 16 data (plaintext/ciphertext) bytes on `ui_in`, one per clock, MSB first.
+4. **Wait** — `BUSY` (`uio_out[6]`) is high while the core processes.
+5. **Read output** — `DATA_VALID` (`uio_out[7]`) goes high and 16 result bytes appear on `uo_out`, one per clock, **MSB first**.
+
+`uio_in[2]` is reserved/unused. Timing target is 50 MHz; static timing on GF180MCU is verified by the CI GDS workflow, not locally.
 
 ## How to test
 
-```bash
-# Run full verification pipeline (lint → synth → sim)
-./scripts/check.sh
+**Simulation (cocotb + iverilog):**
 
-# Or run individual steps:
-make -C test          # Run cocotb simulation
-gtkwave test/tb.fst   # View waveforms in GTKWave
+```bash
+bash scripts/check.sh   # lint + generic synthesis + cocotb
+cd test && make         # cocotb simulation only
 ```
 
-All 4 NIST FIPS-197 test vectors pass in core isolation:
-- NIST-1: Standard test vector
-- NIST-2: Chained encryption (ciphertext becomes next plaintext)
-- NIST-3: All-zero key and plaintext
-- NIST-4: All-zero key, all-ones plaintext
+The test suite runs all **4 NIST FIPS-197 AES-128 test vectors**, for **both encrypt and decrypt**, plus an encrypt→decrypt round-trip checked against openssl — all pass:
+
+| Test | Key | Plaintext | Ciphertext |
+|------|-----|-----------|------------|
+| NIST-1 | `000102030405060708090a0b0c0d0e0f` | `00112233445566778899aabbccddeeff` | `69c4e0d86a7b0430d8cdb78070b4c55a` |
+| NIST-2 (chained) | `000102030405060708090a0b0c0d0e0f` | `69c4e0d86a7b0430d8cdb78070b4c55a` | `4f638c735f614301567824b1a21a4f6a` |
+| NIST-3 (all-zero) | `00...00` | `00...00` | `66e94bd4ef8a2c3b884cfa59ca342b2e` |
+| NIST-4 (zero key, all-ones pt) | `00...00` | `ff...ff` | `3f5b8cc9ea855a0afa7347d23e8d664e` |
+
+Simulated waveforms of these runs are rendered from the VCD: `waveform.png` (vector 1, annotated round-by-round) and `nist-waveforms.png` (all 4 vectors). `schematic.png` is the Yosys `show` schematic of `aes128_core`.
+
+**On hardware:** the design can be loaded onto an FPGA on the Tiny Tapeout dev board (RP2350 or IcePi Zero) using the standard Tiny Tapeout FPGA flow. Drive the serial protocol above from the RP2350 (pulse START, stream 32 bytes on `ui_in`, then read 16 bytes from `uo_out` while `DATA_VALID` is high); a logic analyzer on the `uio` pins is handy for debugging the byte handshake.
 
 ## Visualizations
 
 | Image | Description |
 |-------|-------------|
-| `gds-layout.png` | Full chip layout from Tiny Tapeout workflow (OpenLane/OpenROAD) |
-| `waveform.png` | GTKWave simulation of NIST Test Vector 1 |
-| `nist-waveforms.png` | All 4 NIST test vectors in core isolation |
-
-*To generate these yourself after Tiny Tapeout workflow runs:*
-```bash
-# GDS visualizer (after GitHub Actions workflow completes)
-# https://gds-viewer.tinytapeout.com/?pdk=gf180mcu&model=...
-
-# Waveforms
-cd test && make -B && gtkwave tb.fst
-```
+| GDS visualizer link | Full chip layout rendered by the CI GDS workflow (`gds.yaml`) — not committed to the repo: https://gds-viewer.tinytapeout.com/?pdk=gf180mcu&model=https%3A%2F%2FhaydenCoder.github.io%2Faes128-asic%2F%2Ftinytapeout.oas |
+| `waveform.png` | Simulated timing diagram (iverilog VCD → matplotlib) of NIST test vector 1 encryption |
+| `nist-waveforms.png` | All 4 NIST test vectors, simulated encryption — all PASS |
+| `schematic.png` | Yosys `show` schematic of `aes128_core` (key expansion + round instances) |
 
 ## External hardware
 
-None required for basic operation. For FPGA testing:
-- Tiny Tapeout dev board (RP2350/IcePi Zero)
-- Logic analyzer (for verifying serial I/O protocol)
+None required for simulation. For hardware testing: Tiny Tapeout dev board (RP2350/IcePi Zero) for the FPGA flow, and optionally a logic analyzer to verify the serial I/O protocol on the `uio` pins.
 
 ## Pinout
 
@@ -71,6 +71,6 @@ None required for basic operation. For FPGA testing:
 | `uo_out[7:0]` | Output | `DATA_OUT` | Serial byte output (ciphertext/plaintext) |
 | `uio_in[0]` | Input | `START` | Pulse high to begin operation |
 | `uio_in[1]` | Input | `MODE` | 0 = encrypt, 1 = decrypt |
-| `uio_in[2]` | Input | `KEY_DATA_SEL` | 0 = load key, 1 = load data |
+| `uio_in[2]` | — | Reserved | Unused |
 | `uio_out[6]` | Output | `BUSY` | High while processing |
 | `uio_out[7]` | Output | `DATA_VALID` | High during output phase |

@@ -5,7 +5,8 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles
 
-# NIST FIPS-197 AES-128 test vectors (ENCRYPTION ONLY)
+# AES-128 test vectors, verified against openssl (enc + dec + roundtrip all pass).
+# For each vector: encrypt(plaintext) == ciphertext AND decrypt(ciphertext) == plaintext.
 TEST_VECTORS = [
     {"name": "NIST Test 1",
      "key": bytes.fromhex("000102030405060708090a0b0c0d0e0f"),
@@ -14,7 +15,7 @@ TEST_VECTORS = [
     {"name": "NIST Test 2",
      "key": bytes.fromhex("000102030405060708090a0b0c0d0e0f"),
      "plaintext": bytes.fromhex("69c4e0d86a7b0430d8cdb78070b4c55a"),
-     "ciphertext": bytes.fromhex("ddc6bf790c15760d8d9aeb6f9a75fd2e")},
+     "ciphertext": bytes.fromhex("4f638c735f614301567824b1a21a4f6a")},
     {"name": "NIST Test 3 - All zeros key",
      "key": bytes.fromhex("00000000000000000000000000000000"),
      "plaintext": bytes.fromhex("00000000000000000000000000000000"),
@@ -22,7 +23,7 @@ TEST_VECTORS = [
     {"name": "NIST Test 4 - All zeros key, all ones pt",
      "key": bytes.fromhex("00000000000000000000000000000000"),
      "plaintext": bytes.fromhex("ffffffffffffffffffffffffffffffff"),
-     "ciphertext": bytes.fromhex("f34481ec3cc627bacd5dc3fb08f273e6")},
+     "ciphertext": bytes.fromhex("3f5b8cc9ea855a0afa7347d23e8d664e")},
 ]
 
 # ===== HELPER FUNCTIONS (defined ONCE) =====
@@ -53,19 +54,16 @@ async def send_bytes(dut, data_bytes):
     for b in data_bytes:
         await send_byte(dut, b)
 
-async def pulse_start(dut):
-    val = get_uio_in(dut) | 0x01
+async def pulse_start(dut, decrypt=False):
+    # The wrapper latches decrypt_reg_d <= uio_in[1] only in IDLE when
+    # uio_in[0] && !key_loaded, i.e. on the FIRST start pulse after reset.
+    # Drive uio_in = 0x03 for decrypt, 0x01 for encrypt on that pulse.
+    val = (get_uio_in(dut) & ~0x03) | 0x01 | (0x02 if decrypt else 0x00)
     set_uio_in(dut, val)
     await ClockCycles(dut.clk, 1)
-    val = get_uio_in(dut) & ~0x01
+    val = get_uio_in(dut) & ~0x03
     set_uio_in(dut, val)
     # Don't wait extra cycle - let state machine transition immediately
-
-async def set_mode(dut, decrypt=False):
-    # Unrolled core is encryption-only, ignore decrypt parameter
-    val = get_uio_in(dut)
-    val = val & ~0x02  # Always encryption mode
-    set_uio_in(dut, val)
 
 async def wait_for_state(dut, target_state, timeout=100):
     for _ in range(timeout):
@@ -115,10 +113,11 @@ async def read_output_bytes(dut, num_bytes=16):
         await ClockCycles(dut.clk, 1)
     return bytes(result)
 
-async def run_aes_test(dut, key, plaintext, expected_ciphertext, decrypt=False, test_name=""):
+async def run_aes(dut, key, data_in, expected_out, decrypt=False, test_name=""):
     dut._log.info(f"Running AES {'decrypt' if decrypt else 'encrypt'} test: {test_name}")
 
-    # Full reset - only needed for first test, but safe to do each time
+    # Full reset before every operation (clears key_loaded/data_loaded so the
+    # first start pulse re-latches the mode bit)
     dut.rst_n.value = 0
     dut.ena.value = 1
     dut.ui_in.value = 0
@@ -139,11 +138,8 @@ async def run_aes_test(dut, key, plaintext, expected_ciphertext, decrypt=False, 
 
     dut._log.info(f"Post-reset: state={get_state(dut)}, key_reg={get_key_reg(dut):032x}, data_reg={get_data_reg(dut):032x}")
 
-    # Set mode
-    await set_mode(dut, decrypt)
-
-    # Pulse start
-    await pulse_start(dut)
+    # Pulse start; uio_in bit 1 on this pulse selects decrypt
+    await pulse_start(dut, decrypt=decrypt)
 
     # Wait for LOAD_KEY, then IMMEDIATELY send key bytes (NO settle delay!)
     await wait_for_state(dut, 1)
@@ -158,7 +154,7 @@ async def run_aes_test(dut, key, plaintext, expected_ciphertext, decrypt=False, 
     dut._log.info(f"LOAD_DATA: state={get_state(dut)}")
 
     # Load data - NO settle delay
-    await send_bytes(dut, plaintext)
+    await send_bytes(dut, data_in)
     dut._log.info(f"After data load: data_reg={get_data_reg(dut):032x}")
 
     # Wait for PROCESS
@@ -194,44 +190,37 @@ async def run_aes_test(dut, key, plaintext, expected_ciphertext, decrypt=False, 
         dut._log.error(f"Failed to return to IDLE, state={get_state(dut)}")
         assert False, "Failed to return to IDLE"
 
-    dut._log.info(f"Expected: {expected_ciphertext.hex()}")
+    dut._log.info(f"Expected: {expected_out.hex()}")
     dut._log.info(f"Got:      {output.hex()}")
 
-    assert output == expected_ciphertext, f"Output mismatch! Expected {expected_ciphertext.hex()}, got {output.hex()}"
+    assert output == expected_out, f"Output mismatch! Expected {expected_out.hex()}, got {output.hex()}"
     dut._log.info("Test PASSED")
 
     return output
 
-# ===== TEST CASES =====
+# ===== TEST CASE =====
+# ONE test: a single Clock is started once and shared by every operation.
+# (Starting a Clock inside each @cocotb.test would put multiple drivers on dut.clk.)
 
 @cocotb.test()
-async def test_nist_1_encrypt(dut):
+async def test_aes_vectors(dut):
+    clock = Clock(dut.clk, 10, units="ns")
+    cocotb.start_soon(clock.start())
+    await ClockCycles(dut.clk, 2)  # let the clock get running
+
+    # Encrypt AND decrypt every vector
+    for tv in TEST_VECTORS:
+        await run_aes(dut, tv["key"], tv["plaintext"], tv["ciphertext"],
+                      decrypt=False, test_name=tv["name"] + " encrypt")
+        await run_aes(dut, tv["key"], tv["ciphertext"], tv["plaintext"],
+                      decrypt=True, test_name=tv["name"] + " decrypt")
+
+    # Encrypt -> decrypt round-trip: feed the ACTUAL ciphertext output of the
+    # encrypt run back through decrypt and require the original plaintext.
     tv = TEST_VECTORS[0]
-    dut._log.info("=== Test 1 ===")
-    clock = Clock(dut.clk, 10, unit="us")
-    cocotb.start_soon(clock.start())
-    await run_aes_test(dut, tv["key"], tv["plaintext"], tv["ciphertext"], decrypt=False, test_name=tv["name"])
-
-@cocotb.test()
-async def test_nist_2_encrypt(dut):
-    tv = TEST_VECTORS[1]
-    dut._log.info("=== Test 2 ===")
-    clock = Clock(dut.clk, 10, unit="us")
-    cocotb.start_soon(clock.start())
-    await run_aes_test(dut, tv["key"], tv["plaintext"], tv["ciphertext"], decrypt=False, test_name=tv["name"])
-
-@cocotb.test()
-async def test_nist_3_encrypt(dut):
-    tv = TEST_VECTORS[2]
-    dut._log.info("=== Test 3 ===")
-    clock = Clock(dut.clk, 10, unit="us")
-    cocotb.start_soon(clock.start())
-    await run_aes_test(dut, tv["key"], tv["plaintext"], tv["ciphertext"], decrypt=False, test_name=tv["name"])
-
-@cocotb.test()
-async def test_nist_4_encrypt(dut):
-    tv = TEST_VECTORS[3]
-    dut._log.info("=== Test 4 ===")
-    clock = Clock(dut.clk, 10, unit="us")
-    cocotb.start_soon(clock.start())
-    await run_aes_test(dut, tv["key"], tv["plaintext"], tv["ciphertext"], decrypt=False, test_name=tv["name"])
+    ct = await run_aes(dut, tv["key"], tv["plaintext"], tv["ciphertext"],
+                       decrypt=False, test_name="roundtrip encrypt")
+    pt = await run_aes(dut, tv["key"], ct, tv["plaintext"],
+                       decrypt=True, test_name="roundtrip decrypt")
+    assert pt == tv["plaintext"], f"Round-trip failed: got {pt.hex()}, expected {tv['plaintext'].hex()}"
+    dut._log.info(f"ROUND-TRIP PASSED: {tv['plaintext'].hex()} -> {ct.hex()} -> {pt.hex()}")

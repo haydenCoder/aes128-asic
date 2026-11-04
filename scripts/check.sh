@@ -41,7 +41,9 @@ echo
 # ---------------------------------------------------------------- lint
 if [ "$STAGE" = "all" ] || [ "$STAGE" = "lint" ]; then
   echo "=== [1/3] verilator lint (-Wall) ==="
-  verilator --lint-only -Wall --top-module "$TOP" $SRC 2>&1 | sed 's/^/    /'
+  # -Wno-DECLFILENAME: several modules intentionally live in one file (aes_core.v);
+  # the remaining -Wall warnings are all DECLFILENAME style.
+  verilator --lint-only -Wall -Wno-DECLFILENAME --top-module "$TOP" $SRC 2>&1 | sed 's/^/    /'
   rc=${PIPESTATUS[0]}
   if [ "$rc" -eq 0 ]; then echo "    lint: CLEAN"; else echo "    lint: warnings/errors (exit $rc)"; rc_total=1; fi
   echo
@@ -70,7 +72,9 @@ if [ "$STAGE" = "all" ] || [ "$STAGE" = "sim" ]; then
   ( cd test && rm -rf sim_build results.xml tb.fst && \
     env -u VIRTUAL_ENV -u PYTHONHOME -u PYTHONPATH PATH="$CLEAN_PATH" make ) 2>&1 \
     | grep -E "PASS|FAIL|TESTS=|Error|error:|\*\* " | sed 's/^/    /'
-  if [ -f test/results.xml ] && python3 -m cocotb_tools.check_results test/results.xml >/dev/null 2>&1; then
+  # results.xml must be checked with cocotb's own interpreter (tabbypy3);
+  # the system python3 has no cocotb_tools module.
+  if [ -f test/results.xml ] && "$(cocotb-config --python-bin)" -m cocotb_tools.check_results test/results.xml >/dev/null 2>&1; then
     echo "    sim: PASS"
   else
     echo "    sim: FAIL (see test/results.xml)"
