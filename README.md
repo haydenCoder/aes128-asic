@@ -4,7 +4,7 @@
 
 An area-optimized AES-128 **encryption** core with byte-serial I/O, implemented in a 2×1 Tiny Tapeout tile on GlobalFoundries GF180MCU (180nm).
 
-This is my custom AES-128 ASIC I made to learn how to take a chip from RTL to silicon. The first version was a fully parallel encrypt/decrypt core — correct on all NIST vectors in simulation, but at ~712,000 µm² it could never fit a tile (the GDS CI placement error proved it: utilization 1559%). So I rewrote it as a byte-serial core with one shared S-box: ~250 clock cycles per encryption, ~4K generic cells, comfortably inside a 1×2 tile.
+This is my custom AES-128 ASIC I made to learn how to take a chip from RTL to silicon. The first version was a fully parallel encrypt/decrypt core — correct on all NIST vectors in simulation, but at ~712,000 µm² it could never fit a tile (the GDS CI placement error proved it: utilization 1559%). So I rewrote it as a byte-serial core with one shared S-box: ~297 clock cycles per encryption, ~3.3K generic cells, comfortably inside a 1×2 tile.
 
 **View the GDS visualizer here** (generated after Tiny Tapeout workflow runs): https://gds-viewer.tinytapeout.com/?pdk=gf180mcu&model=https%3A%2F%2FhaydenCoder.github.io%2Faes128-asic%2F%2Ftinytapeout.oas
 
@@ -16,8 +16,8 @@ This is my custom AES-128 ASIC I made to learn how to take a chip from RTL to si
 ## Features
 
 - **AES-128 encryption** — 128-bit block, 128-bit key, 10 rounds (FIPS-197 compliant)
-- **Byte-serial, area-optimized core** — one shared compact (Canright composite-field) S-box time-multiplexed over state and key bytes; SubBytes done by 128-bit rotation; in-place round-key updates through a 32-bit g register (~306 flops, ~4K generic cells)
-- **~250 cycles per encryption** (1 + 10 × (8 key + 16 SubBytes + 1 MixColumns))
+- **Byte-serial, area-optimized core** — one shared compact (Canright composite-field) S-box time-multiplexed over state and key bytes; SubBytes done by 128-bit rotation; in-place round-key updates through a 32-bit g register (~306 flops, ~3.3K generic cells)
+- **~297 cycles per encryption** (1 + 9×(8 key + 1 ShiftRows + 16 SubBytes + 4 MixColumns + 1 AddRoundKey) + 26)
 - **Serial I/O protocol** — 8-bit `ui_in` for byte streaming, 8-bit `uo_out` for output
 - **1×2 tile** on GF180MCU (~340×320 µm core area; placed utilization well under the 60% density cap)
 - **50 MHz target** — static timing on GF180MCU is verified by the CI GDS workflow (`gds.yaml`)
