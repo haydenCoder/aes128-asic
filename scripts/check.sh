@@ -1,17 +1,6 @@
 #!/usr/bin/env bash
-# Local pre-flight for this repo: lint -> generic synthesis size -> cocotb sim.
-#
-# What this can do on macOS:
-#   - verilator lint (strictest error checker available)
-#   - yosys GENERIC synthesis: a size proxy (gate + flip-flop counts)
-#   - the cocotb test suite against RTL
-#
-# What it CANNOT do here (needs CI / Linux + LibreLane):
-#   - GF180 standard-cell mapping, area %, timing (WNS/TNS), DRC
-#   - gate-level simulation against the real PDK netlist
-#
-# Usage:  scripts/check.sh          (all three)
-#         scripts/check.sh lint     (one stage only)
+# Local pre-flight: verilator lint -> yosys generic synth -> cocotb sim.
+# Usage: scripts/check.sh [lint|synth|sim]
 set -uo pipefail
 
 cd "$(dirname "$0")/.." || exit 1

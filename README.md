@@ -9,10 +9,10 @@ This is my custom AES-128 ASIC I made to learn how to take a chip from RTL to si
 **View the GDS visualizer here** (generated after Tiny Tapeout workflow runs): https://gds-viewer.tinytapeout.com/?pdk=gf180mcu&model=https%3A%2F%2FhaydenCoder.github.io%2Faes128-asic%2F%2Ftinytapeout.oas
 
 ![GDS Layout](docs/gds-layout.png)
-*Figure 0: Rendered GDS layout from the CI GDS workflow (`gds.yaml`, run on commit 636a855) — also viewable interactively in the [GDS visualizer](https://gds-viewer.tinytapeout.com/?pdk=gf180mcu&model=https%3A%2F%2FhaydenCoder.github.io%2Faes128-asic%2F%2Ftinytapeout.oas).*
+*Figure 1: Rendered GDS layout from the CI GDS workflow (`gds.yaml`, run on commit 636a855) — also viewable interactively in the [GDS visualizer](https://gds-viewer.tinytapeout.com/?pdk=gf180mcu&model=https%3A%2F%2FhaydenCoder.github.io%2Faes128-asic%2F%2Ftinytapeout.oas).*
 
 ![Simulation Waveform](docs/waveform.png)
-*Figure 1: Simulated timing diagram of NIST test vector 1 encryption (iverilog VCD rendered with matplotlib) — key/data byte loads, START pulse, rounds 1–10, DONE with the ciphertext*
+*Figure 2: Simulated timing diagram of NIST test vector 1 encryption (iverilog VCD rendered with matplotlib) — key/data byte loads, START pulse, rounds 1–10, DONE with the ciphertext*
 
 ## Features
 
@@ -89,10 +89,10 @@ All 4 NIST FIPS-197 test vectors pass in encryption (verified against openssl):
 - Decrypt + encrypt→decrypt round-trip: 4/4 PASS in RTL simulation of the earlier parallel core (openssl-verified)
 
 ![NIST Test Vectors Waveform](docs/nist-waveforms.png)
-*Figure 2: All 4 NIST test vectors, simulated encryption (iverilog VCD rendered with matplotlib) — all PASS*
+*Figure 3: All 4 NIST test vectors, simulated encryption (iverilog VCD rendered with matplotlib) — all PASS*
 
 ![Schematic](docs/schematic.png)
-*Figure 3: Yosys `show` schematic of the byte-serial `aes128_core` — shared S-box, rotation datapath, key-update logic*
+*Figure 4: Yosys `show` schematic of the byte-serial `aes128_core` — shared S-box, rotation datapath, key-update logic*
 
 ## Testing
 

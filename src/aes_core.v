@@ -1,24 +1,5 @@
-/*
- * Copyright (c) 2026 Chung Hon Ting
- * SPDX-License-Identifier: Apache-2.0
- *
- * AES-128 encryption core, byte-serial implementation for a Tiny Tapeout tile.
- *
- * Area-optimized: one shared compact (Canright) S-box time-multiplexed over
- * state bytes and key schedule, SubBytes and MixColumns via register
- * rotation, in-place round-key updates through a 32-bit g register,
- * algorithmic Rcon (xtime). ~306 flops, ~3.5K combinational gates.
- *
- * Interface (byte-serial load, MSB-first):
- *   key_we/key_byte   : shift one key byte into the round-key register
- *   data_we/data_byte : shift one plaintext byte into the state register
- *   start             : pulse -> state <= state ^ rk (round 0 AddRoundKey),
- *                       then 10 rounds
- *   done              : 1-cycle pulse when the ciphertext is in data_out
- *   out_shift/out_byte: while asserted, shifts the result out MSB-first
- *
- * Latency: 1 + 9*(8 key + 1 sr + 16 sub + 4 mc + 1 ark) + (8 + 1 + 16 + 1) = 297 cycles.
- */
+/* Copyright (c) 2026 Chung Hon Ting - SPDX-License-Identifier: Apache-2.0
+ * AES-128 encryption core, byte-serial (one shared S-box, ~297 cycles/op). */
 
 `default_nettype none
 

@@ -1,21 +1,5 @@
-/*
- * Copyright (c) 2026 Chung Hon Ting
- * SPDX-License-Identifier: Apache-2.0
- *
- * AES-128 Wrapper (Tiny Tapeout), byte-serial streaming into the core.
- *
- * External protocol (unchanged):
- *   IDLE    : pulse uio_in[0] (START) -> LOAD_KEY
- *   LOAD_KEY: 16 key bytes on ui_in, one per clock, MSB first
- *   LOAD_DATA: 16 plaintext bytes on ui_in, one per clock, MSB first
- *   PROCESS : busy (uio_out[6]) until core done
- *   OUTPUT  : 16 ciphertext bytes on uo_out, MSB first, uio_out[7]=data_valid
- *
- * The wrapper streams bytes straight into the byte-serial core (no 128-bit
- * buffer registers) to fit the 1x1 tile area budget. The FSM transition
- * timing (registered key_loaded/data_loaded flags) matches the cocotb
- * driver timing that the original buffered wrapper used.
- */
+/* Copyright (c) 2026 Chung Hon Ting - SPDX-License-Identifier: Apache-2.0
+ * Tiny Tapeout wrapper: streams key/data bytes into the core, MSB first. */
 
 `default_nettype none
 
