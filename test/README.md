@@ -1,47 +1,47 @@
-# Sample testbench for a Tiny Tapeout project
+# Testbenches
 
-This is a sample testbench for a Tiny Tapeout project. It uses [cocotb](https://docs.cocotb.org/en/stable/) to drive the DUT and check the outputs.
-See below to get started or for more information, check the [website](https://tinytapeout.com/hdl/testing/).
+Two testbenches cover the design at different levels:
 
-## Setting up
+- `test.py` (cocotb): drives the full Tiny Tapeout wrapper
+  (`tt_um_haydencoder_aes128`) through the pin protocol — START pulse,
+  16 key bytes + 16 plaintext bytes on `ui_in`, then 16 ciphertext bytes
+  read from `uo_out` while `DATA_VALID` is high. Runs all 4 NIST/openssl
+  vectors. Uses protocol timing only (no internal-register reads), so the
+  same test runs unchanged on the gate-level netlist in CI (`gl_test`).
+- `tb_core.v` (standalone iverilog): drives `aes128_core` directly through
+  its byte-serial interface, same 4 vectors.
 
-1. Edit [Makefile](Makefile) and modify `PROJECT_SOURCES` to point to your Verilog files.
-2. Edit [tb.v](tb.v) and replace `tt_um_example` with your module name.
+Expected ciphertexts were generated with openssl and are listed in the
+top-level README.
 
-## How to run
-
-To run the RTL simulation:
+## Running
 
 ```sh
-make -B
+make -B          # RTL simulation (cocotb + icarus)
 ```
 
-To run gatelevel simulation, first harden your project and copy `../runs/wokwi/results/final/verilog/gl/{your_module_name}.v` to `gate_level_netlist.v`.
+Use the repo pre-flight for lint + synthesis + simulation in one go:
 
-Then run:
+```sh
+bash ../scripts/check.sh
+```
+
+Gate-level simulation (after hardening; copy the final netlist to
+`gate_level_netlist.v` first — the CI `gds` workflow does this automatically):
 
 ```sh
 make -B GATES=yes
 ```
 
-If you wish to save the waveform in VCD format instead of FST format, edit tb.v to use `$dumpfile("tb.vcd");` and then run:
+## Waveforms
 
-```sh
-make -B FST=
-```
-
-This will generate `tb.vcd` instead of `tb.fst`.
-
-## How to view the waveform file
-
-Using GTKWave
+The simulation writes `tb.fst` (FST format). View it with:
 
 ```sh
 gtkwave tb.fst tb.gtkw
-```
-
-Using Surfer
-
-```sh
+# or
 surfer tb.fst
 ```
+
+To dump VCD instead, edit `tb.v` to use `$dumpfile("tb.vcd");` and run
+`make -B FST=`.

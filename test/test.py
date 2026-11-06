@@ -6,7 +6,7 @@ from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles
 
 # AES-128 encryption test vectors, verified against openssl.
-# The taped-out hardware implements encryption (byte-serial core, one tile);
+# The taped-out hardware is encrypt-only (byte-serial core, 1x2 tile);
 # decryption was verified in RTL simulation of the earlier parallel core.
 TEST_VECTORS = [
     {"name": "NIST Test 1",
@@ -38,14 +38,6 @@ def set_uio_in(dut, val):
 def get_uio_out(dut):
     return int(dut.uio_out.value)
 
-def get_state(dut):
-    # Internal FSM state is not reliably readable in the gate-level netlist
-    # (yosys renames it), so the driver below uses protocol timing only.
-    try:
-        return int(dut.user_project.state.value)
-    except Exception:
-        return -1
-
 async def send_byte(dut, byte_val):
     dut.ui_in.value = byte_val
     await ClockCycles(dut.clk, 1)
@@ -54,24 +46,12 @@ async def send_bytes(dut, data_bytes):
     for b in data_bytes:
         await send_byte(dut, b)
 
-async def pulse_start(dut, decrypt=False):
-    # The wrapper latches decrypt_reg_d <= uio_in[1] only in IDLE when
-    # uio_in[0] && !key_loaded, i.e. on the FIRST start pulse after reset.
-    # Drive uio_in = 0x03 for decrypt, 0x01 for encrypt on that pulse.
-    val = (get_uio_in(dut) & ~0x03) | 0x01 | (0x02 if decrypt else 0x00)
-    set_uio_in(dut, val)
+async def pulse_start(dut):
+    # START = uio_in[0]. The wrapper moves IDLE -> LOAD_KEY on the next edge;
+    # key bytes stream on the cycles immediately after the pulse.
+    set_uio_in(dut, get_uio_in(dut) | 0x01)
     await ClockCycles(dut.clk, 1)
-    val = get_uio_in(dut) & ~0x03
-    set_uio_in(dut, val)
-    # Don't wait extra cycle - let state machine transition immediately
-
-async def wait_for_state(dut, target_state, timeout=100):
-    for _ in range(timeout):
-        if get_state(dut) == target_state:
-            return True
-        await ClockCycles(dut.clk, 1)
-    dut._log.error(f"Timeout waiting for state {target_state}, current state={get_state(dut)}")
-    return False
+    set_uio_in(dut, get_uio_in(dut) & ~0x01)
 
 async def wait_for_data_valid(dut, max_cycles=5000):
     data_valid = (get_uio_out(dut) >> 7) & 1
@@ -113,10 +93,10 @@ async def read_output_bytes(dut, num_bytes=16):
         await ClockCycles(dut.clk, 1)
     return bytes(result)
 
-async def run_aes(dut, key, data_in, expected_out, decrypt=False, test_name=""):
-    dut._log.info(f"Running AES {'decrypt' if decrypt else 'encrypt'} test: {test_name}")
+async def run_aes(dut, key, data_in, expected_out, test_name=""):
+    dut._log.info(f"Running AES encrypt test: {test_name}")
 
-    # Full reset before every operation (clears key_loaded/data_loaded)
+    # Full reset before every operation (wrapper returns to IDLE)
     dut.rst_n.value = 0
     dut.ena.value = 1
     dut.ui_in.value = 0
@@ -126,7 +106,7 @@ async def run_aes(dut, key, data_in, expected_out, decrypt=False, test_name=""):
     await ClockCycles(dut.clk, 5)
 
     # Pulse start (IDLE -> LOAD_KEY on the next edge)
-    await pulse_start(dut, decrypt=decrypt)
+    await pulse_start(dut)
 
     # Stream 16 key bytes then 16 data bytes on consecutive cycles; the
     # wrapper consumes exactly one byte per cycle in LOAD_KEY/LOAD_DATA.
@@ -167,6 +147,6 @@ async def test_aes_vectors(dut):
     # -> 16 data bytes -> BUSY -> 16 ciphertext bytes, MSB first)
     for tv in TEST_VECTORS:
         await run_aes(dut, tv["key"], tv["plaintext"], tv["ciphertext"],
-                      decrypt=False, test_name=tv["name"] + " encrypt")
+                      test_name=tv["name"])
 
     dut._log.info("ALL VECTORS PASSED")

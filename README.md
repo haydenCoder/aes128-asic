@@ -2,7 +2,7 @@
 
 # AES-128 Core for Tiny Tapeout GF180
 
-An area-optimized AES-128 **encryption** core with byte-serial I/O, implemented in a 2×1 Tiny Tapeout tile on GlobalFoundries GF180MCU (180nm).
+An area-optimized AES-128 **encryption** core with byte-serial I/O, implemented in a 1×2 Tiny Tapeout tile on GlobalFoundries GF180MCU (180nm).
 
 This is my custom AES-128 ASIC I made to learn how to take a chip from RTL to silicon. The first version was a fully parallel encrypt/decrypt core — correct on all NIST vectors in simulation, but at ~712,000 µm² it could never fit a tile (the GDS CI placement error proved it: utilization 1559%). So I rewrote it as a byte-serial core with one shared S-box: ~297 clock cycles per encryption, ~3.3K generic cells, comfortably inside a 1×2 tile.
 
@@ -40,7 +40,7 @@ The core follows FIPS-197 encryption, serialized one byte at a time:
 1. Pulse `START` (`uio_in[0]`) high for one clock
 2. Stream 16 key bytes on `ui_in`, one per clock, MSB first
 3. Stream 16 plaintext bytes on `ui_in`, one per clock, MSB first
-4. Wait while `BUSY` (`uio_out[6]`) is high (~250 cycles)
+4. Wait while `BUSY` (`uio_out[6]`) is high (~300 cycles)
 5. Read 16 ciphertext bytes on `uo_out` with `DATA_VALID` (`uio_out[7]`) high, one per clock, MSB first
 
 (`uio_in[7:1]` are unused.)
@@ -124,15 +124,11 @@ gtkwave test/sim_build/tb_core.fst   # view waveforms in GTKWave
 
 ## Programming Configuration
 
-This design can be tested on FPGA using the Tiny Tapeout dev board (RP2350/IcePi Zero):
-
-```bash
-# For IcePi Zero
-cd fpga
-make BOARD=icepi_zero
-# For other boards, replace .lpf with your board's pin constraints
-# and modify top module for your device
-```
+The `fpga` workflow (`.github/workflows/fpga.yaml`, manual dispatch) builds an
+ICE40UP5K bitstream using the Tiny Tapeout `tt-gds-action/fpga/ice40up5k` action.
+For physical testing, the design targets the Tiny Tapeout dev board (RP2350 or
+IcePi Zero): drive the serial protocol above from the board's controller and
+check the ciphertext against the NIST vectors.
 
 ## Inspiration
 

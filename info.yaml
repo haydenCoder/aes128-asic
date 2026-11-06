@@ -14,7 +14,6 @@ project:
   source_files:
     - "project.v"
     - "sbox.v"
-    - "key_expansion.v"
     - "shift_rows.v"
     - "mix_columns.v"
     - "aes_core.v"
