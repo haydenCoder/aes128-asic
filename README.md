@@ -2,41 +2,41 @@
 
 # AES-128 Core for Tiny Tapeout GF180
 
-An area-optimized AES-128 **encryption** core with byte-serial I/O, implemented in a 1×2 Tiny Tapeout tile on GlobalFoundries GF180MCU (180nm).
+An area-optimized AES-128 encryption core with byte-serial I/O, implemented in a 1×2 Tiny Tapeout tile on GlobalFoundries GF180MCU (180nm).
 
-This is my custom AES-128 ASIC I made to learn how to take a chip from RTL to silicon. The first version was a fully parallel encrypt/decrypt core — correct on all NIST vectors in simulation, but at ~712,000 µm² it could never fit a tile (the GDS CI placement error proved it: utilization 1559%). So I rewrote it as a byte-serial core with one shared S-box: ~297 clock cycles per encryption, ~3.3K generic cells, comfortably inside a 1×2 tile.
+This is my custom AES-128 ASIC I made to learn how to take a chip from RTL to silicon. The first version was a fully parallel encrypt/decrypt core. It was correct on all NIST vectors in simulation, but at ~712,000 µm² it could never fit a tile (the GDS CI placement error proved it: utilization 1559%). So I rewrote it as a byte-serial core with one shared S-box: ~297 clock cycles per encryption, ~3.3K generic cells, comfortably inside a 1×2 tile.
 
 **View the GDS visualizer here** (generated after Tiny Tapeout workflow runs): https://gds-viewer.tinytapeout.com/?pdk=gf180mcu&model=https%3A%2F%2FhaydenCoder.github.io%2Faes128-asic%2F%2Ftinytapeout.oas
 
 ![GDS Layout](docs/gds-layout.png)
-*Figure 1: Rendered GDS layout from the CI GDS workflow (`gds.yaml`, run on commit 636a855) — also viewable interactively in the [GDS visualizer](https://gds-viewer.tinytapeout.com/?pdk=gf180mcu&model=https%3A%2F%2FhaydenCoder.github.io%2Faes128-asic%2F%2Ftinytapeout.oas).*
+*Figure 1: Rendered GDS layout from the CI GDS workflow (`gds.yaml`, run on commit 636a855). Also viewable interactively in the [GDS visualizer](https://gds-viewer.tinytapeout.com/?pdk=gf180mcu&model=https%3A%2F%2FhaydenCoder.github.io%2Faes128-asic%2F%2Ftinytapeout.oas).*
 
 ![Simulation Waveform](docs/waveform.png)
-*Figure 2: Simulated timing diagram of NIST test vector 1 encryption (iverilog VCD rendered with matplotlib) — key/data byte loads, START pulse, rounds 1–10, DONE with the ciphertext*
+*Figure 2: Simulated timing diagram of NIST test vector 1 encryption (iverilog VCD rendered with matplotlib). Key/data byte loads, START pulse, rounds 1–10, DONE with the ciphertext.*
 
 ## Features
 
-- **AES-128 encryption** — 128-bit block, 128-bit key, 10 rounds (FIPS-197 compliant)
-- **Byte-serial, area-optimized core** — one shared compact (Canright composite-field) S-box time-multiplexed over state and key bytes; SubBytes done by 128-bit rotation; in-place round-key updates through a 32-bit g register (~306 flops, ~3.3K generic cells)
-- **~297 cycles per encryption** (1 + 9×(8 key + 1 ShiftRows + 16 SubBytes + 4 MixColumns + 1 AddRoundKey) + 26)
-- **Serial I/O protocol** — 8-bit `ui_in` for byte streaming, 8-bit `uo_out` for output
-- **1×2 tile** on GF180MCU (~340×320 µm core area; placed utilization well under the 60% density cap)
-- **20 MHz target** — static timing on GF180MCU is verified by the CI GDS workflow (`gds.yaml`)
+- AES-128 encryption: 128-bit block, 128-bit key, 10 rounds (FIPS-197 compliant)
+- Byte-serial, area-optimized core: one shared compact (Canright composite-field) S-box time-multiplexed over state and key bytes. SubBytes done by 128-bit rotation. In-place round-key updates through a 32-bit g register (~306 flops, ~3.3K generic cells)
+- ~297 cycles per encryption (1 + 9×(8 key + 1 ShiftRows + 16 SubBytes + 4 MixColumns + 1 AddRoundKey) + 26)
+- Serial I/O protocol: 8-bit `ui_in` for byte streaming, 8-bit `uo_out` for output
+- 1×2 tile on GF180MCU (~340×320 µm core area; placed utilization well under the 60% density cap)
+- 20 MHz target: static timing on GF180MCU verified by the CI GDS workflow (`gds.yaml`)
 - Decryption was fully implemented and verified (openssl round-trip, 4/4 NIST vectors) in the earlier parallel-core version in RTL simulation; the taped-out hardware is encrypt-only to fit the tile budget
 
 ## How It Works
 
 The core follows FIPS-197 encryption, serialized one byte at a time:
 
-1. **Load key** — 16 key bytes stream into the round-key register (MSB first). During processing this register is updated in place, so it always holds the current round key.
-2. **Load data** — 16 plaintext bytes stream into the 128-bit state register (MSB first).
-3. **START** — state ^= round key (round 0 AddRoundKey), then 10 rounds:
-   - **Key update (8 cycles)** — `g = SubWord(RotWord(w3)) ^ Rcon` assembled 1 byte/cycle through the shared S-box, then the 4 key words are updated in place (`w[j] ^= w[j-1]` chain)
-   - **SubBytes (16 cycles)** — one byte per cycle through the shared S-box; the state register rotates left 8 bits per cycle, so after 16 rotations the byte order is restored
-   - **ShiftRows + MixColumns + AddRoundKey (1 cycle)** — combinational; final round skips MixColumns
-4. **DONE** — the ciphertext is in the state register and streams out 16 bytes on `uo_out`, MSB first
+1. Load key: 16 key bytes stream into the round-key register (MSB first). During processing this register is updated in place, so it always holds the current round key.
+2. Load data: 16 plaintext bytes stream into the 128-bit state register (MSB first).
+3. START: state ^= round key (round 0 AddRoundKey), then 10 rounds:
+   - Key update (8 cycles): `g = SubWord(RotWord(w3)) ^ Rcon` assembled 1 byte/cycle through the shared S-box, then the 4 key words are updated in place (`w[j] ^= w[j-1]` chain)
+   - SubBytes (16 cycles): one byte per cycle through the shared S-box. The state register rotates left 8 bits per cycle, so after 16 rotations the byte order is restored.
+   - ShiftRows + MixColumns + AddRoundKey (1 cycle): combinational. Final round skips MixColumns.
+4. DONE: the ciphertext is in the state register and streams out 16 bytes on `uo_out`, MSB first
 
-**Serial protocol:**
+Serial protocol:
 1. Pulse `START` (`uio_in[0]`) high for one clock
 2. Stream 16 key bytes on `ui_in`, one per clock, MSB first
 3. Stream 16 plaintext bytes on `ui_in`, one per clock, MSB first
@@ -60,7 +60,7 @@ The core follows FIPS-197 encryption, serialized one byte at a time:
 
 | Problem | Solution |
 |---------|----------|
-| Parallel core was 712,000 µm² — 13.7× over the 1×1 tile (GDS CI: utilization 1559.533%, GPL-0301) | Rewrote as byte-serial core with one shared S-box; moved to a 1×2 tile |
+| Parallel core was 712,000 µm² (13.7× over the 1×1 tile; GDS CI: utilization 1559.533%, GPL-0301) | Rewrote as byte-serial core with one shared S-box; moved to a 1×2 tile |
 | LUT S-box (~2K mux cells) too big | Replaced with the compact Canright composite-field S-box (GF(2⁸) inversion in GF((2²)²) + affine transform, ~150 gates); verified 256/256 against the FIPS-197 table in Python and Verilog |
 | 16-way byte-write muxes in the key schedule blew up area | Round key updated in place word-by-word through a 32-bit `g` register |
 | Variable-index SubBytes part-select needed a 16:1 mux per state bit | SubBytes via 128-bit rotation (16 × 8-bit rotations = identity ordering) |
@@ -84,15 +84,15 @@ All 4 NIST FIPS-197 test vectors pass in encryption (verified against openssl):
 | NIST-3 (all-zero) | `00...00` | `00...00` | `66e94bd4ef8a2c3b884cfa59ca342b2e` |
 | NIST-4 (all-zero key, all-ones pt) | `00...00` | `ff...ff` | `3f5b8cc9ea855a0afa7347d23e8d664e` |
 
-- `test/tb_core.v` (iverilog): drives the core directly through the byte-serial interface — 4/4 PASS
-- `test/test.py` (cocotb): drives the full Tiny Tapeout wrapper through the pin protocol — 4/4 PASS
+- `test/tb_core.v` (iverilog): drives the core directly through the byte-serial interface. 4/4 PASS
+- `test/test.py` (cocotb): drives the full Tiny Tapeout wrapper through the pin protocol. 4/4 PASS
 - Decrypt + encrypt→decrypt round-trip: 4/4 PASS in RTL simulation of the earlier parallel core (openssl-verified)
 
 ![NIST Test Vectors Waveform](docs/nist-waveforms.png)
-*Figure 3: All 4 NIST test vectors, simulated encryption (iverilog VCD rendered with matplotlib) — all PASS*
+*Figure 3: All 4 NIST test vectors, simulated encryption (iverilog VCD rendered with matplotlib). All PASS.*
 
 ![Schematic](docs/schematic.png)
-*Figure 4: Yosys `show` schematic of the byte-serial `aes128_core` — shared S-box, rotation datapath, key-update logic*
+*Figure 4: Yosys `show` schematic of the byte-serial `aes128_core`. Shared S-box, rotation datapath, key-update logic.*
 
 ## Testing
 
@@ -117,9 +117,9 @@ gtkwave test/sim_build/tb_core.fst   # view waveforms in GTKWave
 
 | Visualization | Description |
 |---------------|-------------|
-| ![GDS Layout](docs/gds-layout.png) | Full tile layout, rendered by the CI GDS workflow (`gds.yaml`) — also in the [GDS visualizer](https://gds-viewer.tinytapeout.com/?pdk=gf180mcu&model=https%3A%2F%2FhaydenCoder.github.io%2Faes128-asic%2F%2Ftinytapeout.oas) |
+| ![GDS Layout](docs/gds-layout.png) | Full tile layout, rendered by the CI GDS workflow (`gds.yaml`). Also in the [GDS visualizer](https://gds-viewer.tinytapeout.com/?pdk=gf180mcu&model=https%3A%2F%2FhaydenCoder.github.io%2Faes128-asic%2F%2Ftinytapeout.oas) |
 | ![Simulation Waveform](docs/waveform.png) | Timing diagram (VCD → PNG) of NIST vector 1 encryption |
-| ![NIST Waveforms](docs/nist-waveforms.png) | All 4 NIST test vectors, simulated encryption — all PASS |
+| ![NIST Waveforms](docs/nist-waveforms.png) | All 4 NIST test vectors, simulated encryption. All PASS |
 | ![Schematic](docs/schematic.png) | Yosys `show` schematic of `aes128_core` |
 
 ## Programming Configuration
@@ -136,7 +136,7 @@ This project uses the Tiny Tapeout template which has all of the workflows to bu
 
 ## License
 
-Apache-2.0 — Compatible with Tiny Tapeout submission requirements.
+Apache-2.0 (compatible with Tiny Tapeout submission requirements).
 
 ## Author
 
