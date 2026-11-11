@@ -2,9 +2,11 @@
 
 # AES-128 Core for Tiny Tapeout GF180
 
-This is my custom AES-128 ASIC, a byte-serial encryption core that fits in a 1×2 Tiny Tapeout tile on GF180MCU (180nm). I built it to learn how to take a chip from RTL all the way to silicon. The first version was a fully parallel encrypt/decrypt core. It was correct on all NIST vectors in simulation, but at ~712,000 µm² it could never fit a tile (the GDS CI placement error proved it: 1559% utilization). So I rewrote it as a byte-serial core with one shared S-box: ~297 clock cycles per encryption, ~3.3K generic cells, comfortably inside a 1×2 tile.
+So I built my own AES-128 ASIC. It's a byte-serial encryption core that fits in a 1×2 Tiny Tapeout tile on GF180MCU (180nm). The whole point was to learn how you actually get a chip from RTL all the way to real silicon.
 
-**View the GDS visualizer here** (generated after Tiny Tapeout workflow runs): https://gds-viewer.tinytapeout.com/?pdk=gf180mcu&model=https%3A%2F%2FhaydenCoder.github.io%2Faes128-asic%2F%2Ftinytapeout.oas
+I'll be honest — the first version was a fully parallel encrypt/decrypt core. It passed every single NIST vector in simulation, which felt great at the time. But it came out to ~712,000 µm². That's... a lot. It could never fit a tile. The GDS CI placement error literally proved it: 1559% utilization. So I threw it out and rewrote the thing as a byte-serial core with one shared S-box. Now it's ~297 clock cycles per encryption and ~3.3K generic cells, which comfortably fits in a 1×2 tile. Way more relaxed.
+
+**[View the GDS visualizer here](https://gds-viewer.tinytapeout.com/?pdk=gf180mcu&model=https%3A%2F%2FhaydenCoder.github.io%2Faes128-asic%2F%2Ftinytapeout.oas)** (it generates after the Tiny Tapeout workflow runs).
 
 ![GDS Layout](docs/gds-layout.png)
 *Figure 1: Rendered GDS layout from the CI GDS workflow (`gds.yaml`, run on commit 636a855). Also viewable interactively in the [GDS visualizer](https://gds-viewer.tinytapeout.com/?pdk=gf180mcu&model=https%3A%2F%2FhaydenCoder.github.io%2Faes128-asic%2F%2Ftinytapeout.oas).*
@@ -12,27 +14,22 @@ This is my custom AES-128 ASIC, a byte-serial encryption core that fits in a 1×
 ![Simulation Waveform](docs/waveform.png)
 *Figure 2: Simulated timing diagram of NIST test vector 1 encryption (iverilog VCD rendered with matplotlib). Key/data byte loads, START pulse, rounds 1–10, DONE with the ciphertext.*
 
-## Features
+## What it actually does
 
-What it does:
-- AES-128 encryption: 128-bit block, 128-bit key, 10 rounds (FIPS-197 compliant)
-- Byte-serial, area-optimized core: one shared compact (Canright composite-field) S-box time-multiplexed over state and key bytes. SubBytes done by 128-bit rotation. In-place round-key updates through a 32-bit g register (~306 flops, ~3.3K generic cells)
-- ~297 cycles per encryption (1 + 9×(8 key + 1 ShiftRows + 16 SubBytes + 4 MixColumns + 1 AddRoundKey) + 26)
-- Serial I/O: 8-bit `ui_in` in, 8-bit `uo_out` out
-- 1×2 tile on GF180MCU (~340×320 µm; utilization under the 60% density cap)
-- 20 MHz, verified by the CI GDS workflow (`gds.yaml`)
-- Decryption was in the earlier parallel version (4/4 NIST, openssl round-trip); the taped-out hardware is encrypt-only to fit the tile
+Yeah, it encrypts AES-128: 128-bit block, 128-bit key, 10 rounds, FIPS-197 compliant. But the interesting part is how. It's area-optimized and byte-serial — one shared compact (Canright composite-field) S-box gets time-multiplexed over the state and key bytes. SubBytes happen by 128-bit rotation, and the round keys update in place through a 32-bit `g` register. That's roughly 306 flops total, ~3.3K generic cells.
 
-## How It Works
+The timing math is a bit of a mess to write out: ~297 cycles per encryption, which is 1 + 9×(8 key + 1 ShiftRows + 16 SubBytes + 4 MixColumns + 1 AddRoundKey) + 26. That last +26 is the final round and output phase.
 
-Here's how it runs, byte by byte:
+I/O is all serial — 8-bit `ui_in` on the way in, 8-bit `uo_out` on the way out. The whole core lands in a 1×2 tile on GF180MCU (~340×320 µm), and it stays under the 60% density cap. Runs at 20 MHz, and the CI GDS workflow (`gds.yaml`) verifies it.
 
-1. Key: 16 bytes stream in MSB-first. The register updates in place as rounds run, so it always holds the current round key.
-2. Data: 16 plaintext bytes stream in MSB-first.
-3. START: state ^= round key, then 10 rounds of key update (8 cycles), SubBytes (16), ShiftRows+MixColumns+AddRoundKey (1). Round 10 skips MixColumns.
-4. DONE: ciphertext in the state register, streams out 16 bytes on `uo_out`.
+One thing that bugs me a little: the taped-out hardware is encrypt-only. The earlier parallel version had decryption (4/4 NIST, openssl round-trip), but to fit the tile I had to cut it. I'll probably add it back eventually. Maybe.
 
-Serial protocol:
+## How it runs
+
+So here's the thing about how this thing actually works, byte by byte. The key streams in first — 16 bytes, MSB-first. The register updates in place as the rounds run, so at any given moment it's holding the current round key. Then the 16 plaintext bytes stream in, also MSB-first. Hit START and the whole thing kicks off: state ^= round key, then 10 rounds of key update (8 cycles), SubBytes (16), and ShiftRows+MixColumns+AddRoundKey (1). Wait, round 10 skips MixColumns — that's the one that always gets me. When it's done, the ciphertext is sitting in the state register and it streams out 16 bytes on `uo_out`.
+
+The serial protocol itself is:
+
 1. Pulse `START` (`uio_in[0]`)
 2. Stream 16 key bytes, then 16 plaintext bytes, on `ui_in`, one per clock, MSB first
 3. Wait: `BUSY` (`uio_out[6]`) stays high ~300 cycles
@@ -53,6 +50,8 @@ Serial protocol:
 
 ## Problems I hit
 
+There were more of these than I'd like to admit. Some took forever.
+
 | Problem | Solution |
 |---------|----------|
 | Parallel core was 712,000 µm² (13.7× over the 1×1 tile; GDS CI: utilization 1559.533%, GPL-0301) | Rewrote as byte-serial core with one shared S-box; moved to a 1×2 tile |
@@ -70,7 +69,7 @@ Serial protocol:
 
 ## Test Bench
 
-All 4 NIST FIPS-197 vectors pass (cross-checked with openssl):
+All 4 NIST FIPS-197 vectors pass, and I cross-checked them with openssl just to be safe:
 
 | Test | Key | Plaintext | Ciphertext |
 |------|-----|-----------|------------|
@@ -79,9 +78,7 @@ All 4 NIST FIPS-197 vectors pass (cross-checked with openssl):
 | NIST-3 (all-zero) | `00...00` | `00...00` | `66e94bd4ef8a2c3b884cfa59ca342b2e` |
 | NIST-4 (all-zero key, all-ones pt) | `00...00` | `ff...ff` | `3f5b8cc9ea855a0afa7347d23e8d664e` |
 
-- `test/tb_core.v` (iverilog): drives the core directly. 4/4 PASS
-- `test/test.py` (cocotb): drives the full Tiny Tapeout wrapper. 4/4 PASS
-- Decrypt round-trip: 4/4 PASS in the earlier parallel version
+The testbenches: `test/tb_core.v` drives the core directly with iverilog — 4/4 PASS. `test/test.py` is the cocotb one and drives the full Tiny Tapeout wrapper — also 4/4 PASS. And the decrypt round-trip was 4/4 PASS back in the earlier parallel version, before I cut decryption.
 
 ![NIST Test Vectors Waveform](docs/nist-waveforms.png)
 *Figure 3: All 4 NIST test vectors, simulated encryption (iverilog VCD rendered with matplotlib). All PASS.*
@@ -98,7 +95,7 @@ cd test && make         # cocotb simulation only
 
 ## Setup
 
-Requires: `iverilog`, `verilator`, `yosys`, `cocotb` (e.g. via `oss-cad-suite` in PATH)
+You'll need `iverilog`, `verilator`, `yosys`, and `cocotb` on your PATH (e.g. via `oss-cad-suite`). Then:
 
 ```bash
 git clone https://github.com/haydenCoder/aes128-asic
@@ -110,6 +107,8 @@ gtkwave test/sim_build/tb_core.fst   # view waveforms in GTKWave
 
 ## Screenshots & Visualizations
 
+Here's the rest of the visual stuff. I kept it as a quick reference:
+
 | Visualization | Description |
 |---------------|-------------|
 | ![GDS Layout](docs/gds-layout.png) | Full tile layout, rendered by the CI GDS workflow (`gds.yaml`). Also in the [GDS visualizer](https://gds-viewer.tinytapeout.com/?pdk=gf180mcu&model=https%3A%2F%2FhaydenCoder.github.io%2Faes128-asic%2F%2Ftinytapeout.oas) |
@@ -119,11 +118,11 @@ gtkwave test/sim_build/tb_core.fst   # view waveforms in GTKWave
 
 ## Programming Configuration
 
-The `fpga` workflow (`.github/workflows/fpga.yaml`, manual dispatch) builds an ICE40UP5K bitstream. For physical testing, drive the serial protocol from a Tiny Tapeout dev board (RP2350 or IcePi Zero) and check the ciphertext against the NIST vectors.
+The `fpga` workflow (`.github/workflows/fpga.yaml`, manual dispatch) builds an ICE40UP5K bitstream. To actually test it on hardware, you'd drive the serial protocol from a Tiny Tapeout dev board — RP2350 or IcePi Zero — and check the ciphertext against the NIST vectors above.
 
 ## Inspiration
 
-This project uses the Tiny Tapeout template which has all of the workflows to build your project and get it ready for manufacturing. Thanks to the Tiny Tapeout community and Matt Venn for making silicon accessible!
+This whole project runs on the Tiny Tapeout template, which comes with all the workflows to build your project and get it ready for manufacturing. Big thanks to the Tiny Tapeout community and Matt Venn for making silicon accessible at all.
 
 ## License
 
