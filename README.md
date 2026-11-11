@@ -14,32 +14,29 @@ This is my custom AES-128 ASIC, a byte-serial encryption core that fits in a 1×
 
 ## Features
 
+What it does:
 - AES-128 encryption: 128-bit block, 128-bit key, 10 rounds (FIPS-197 compliant)
 - Byte-serial, area-optimized core: one shared compact (Canright composite-field) S-box time-multiplexed over state and key bytes. SubBytes done by 128-bit rotation. In-place round-key updates through a 32-bit g register (~306 flops, ~3.3K generic cells)
 - ~297 cycles per encryption (1 + 9×(8 key + 1 ShiftRows + 16 SubBytes + 4 MixColumns + 1 AddRoundKey) + 26)
-- Serial I/O protocol: 8-bit `ui_in` for byte streaming, 8-bit `uo_out` for output
-- 1×2 tile on GF180MCU (~340×320 µm core area; placed utilization well under the 60% density cap)
-- 20 MHz target: static timing on GF180MCU verified by the CI GDS workflow (`gds.yaml`)
-- Decryption was fully implemented and verified (openssl round-trip, 4/4 NIST vectors) in the earlier parallel-core version in RTL simulation; the taped-out hardware is encrypt-only to fit the tile budget
+- Serial I/O: 8-bit `ui_in` in, 8-bit `uo_out` out
+- 1×2 tile on GF180MCU (~340×320 µm; utilization under the 60% density cap)
+- 20 MHz, verified by the CI GDS workflow (`gds.yaml`)
+- Decryption was in the earlier parallel version (4/4 NIST, openssl round-trip); the taped-out hardware is encrypt-only to fit the tile
 
 ## How It Works
 
-The core follows FIPS-197 encryption, serialized one byte at a time:
+Here's how it runs, byte by byte:
 
-1. Load key: 16 key bytes stream into the round-key register (MSB first). During processing this register is updated in place, so it always holds the current round key.
-2. Load data: 16 plaintext bytes stream into the 128-bit state register (MSB first).
-3. START: state ^= round key (round 0 AddRoundKey), then 10 rounds:
-   - Key update (8 cycles): `g = SubWord(RotWord(w3)) ^ Rcon` assembled 1 byte/cycle through the shared S-box, then the 4 key words are updated in place (`w[j] ^= w[j-1]` chain)
-   - SubBytes (16 cycles): one byte per cycle through the shared S-box. The state register rotates left 8 bits per cycle, so after 16 rotations the byte order is restored.
-   - ShiftRows + MixColumns + AddRoundKey (1 cycle): combinational. Final round skips MixColumns.
-4. DONE: the ciphertext is in the state register and streams out 16 bytes on `uo_out`, MSB first
+1. Key: 16 bytes stream in MSB-first. The register updates in place as rounds run, so it always holds the current round key.
+2. Data: 16 plaintext bytes stream in MSB-first.
+3. START: state ^= round key, then 10 rounds of key update (8 cycles), SubBytes (16), ShiftRows+MixColumns+AddRoundKey (1). Round 10 skips MixColumns.
+4. DONE: ciphertext in the state register, streams out 16 bytes on `uo_out`.
 
 Serial protocol:
-1. Pulse `START` (`uio_in[0]`) high for one clock
-2. Stream 16 key bytes on `ui_in`, one per clock, MSB first
-3. Stream 16 plaintext bytes on `ui_in`, one per clock, MSB first
-4. Wait while `BUSY` (`uio_out[6]`) is high (~300 cycles)
-5. Read 16 ciphertext bytes on `uo_out` with `DATA_VALID` (`uio_out[7]`) high, one per clock, MSB first
+1. Pulse `START` (`uio_in[0]`)
+2. Stream 16 key bytes, then 16 plaintext bytes, on `ui_in`, one per clock, MSB first
+3. Wait: `BUSY` (`uio_out[6]`) stays high ~300 cycles
+4. Read 16 ciphertext bytes on `uo_out` while `DATA_VALID` (`uio_out[7]`) is high
 
 (`uio_in[7:1]` are unused.)
 
@@ -54,7 +51,7 @@ Serial protocol:
 | `uio_out[6]` | Output | `BUSY` | High while processing |
 | `uio_out[7]` | Output | `DATA_VALID` | High during output phase |
 
-## Problems Overcome
+## Problems I hit
 
 | Problem | Solution |
 |---------|----------|
@@ -73,7 +70,7 @@ Serial protocol:
 
 ## Test Bench
 
-All 4 NIST FIPS-197 test vectors pass in encryption (verified against openssl):
+All 4 NIST FIPS-197 vectors pass (cross-checked with openssl):
 
 | Test | Key | Plaintext | Ciphertext |
 |------|-----|-----------|------------|
@@ -82,9 +79,9 @@ All 4 NIST FIPS-197 test vectors pass in encryption (verified against openssl):
 | NIST-3 (all-zero) | `00...00` | `00...00` | `66e94bd4ef8a2c3b884cfa59ca342b2e` |
 | NIST-4 (all-zero key, all-ones pt) | `00...00` | `ff...ff` | `3f5b8cc9ea855a0afa7347d23e8d664e` |
 
-- `test/tb_core.v` (iverilog): drives the core directly through the byte-serial interface. 4/4 PASS
-- `test/test.py` (cocotb): drives the full Tiny Tapeout wrapper through the pin protocol. 4/4 PASS
-- Decrypt + encrypt→decrypt round-trip: 4/4 PASS in RTL simulation of the earlier parallel core (openssl-verified)
+- `test/tb_core.v` (iverilog): drives the core directly. 4/4 PASS
+- `test/test.py` (cocotb): drives the full Tiny Tapeout wrapper. 4/4 PASS
+- Decrypt round-trip: 4/4 PASS in the earlier parallel version
 
 ![NIST Test Vectors Waveform](docs/nist-waveforms.png)
 *Figure 3: All 4 NIST test vectors, simulated encryption (iverilog VCD rendered with matplotlib). All PASS.*
@@ -122,11 +119,7 @@ gtkwave test/sim_build/tb_core.fst   # view waveforms in GTKWave
 
 ## Programming Configuration
 
-The `fpga` workflow (`.github/workflows/fpga.yaml`, manual dispatch) builds an
-ICE40UP5K bitstream using the Tiny Tapeout `tt-gds-action/fpga/ice40up5k` action.
-For physical testing, the design targets the Tiny Tapeout dev board (RP2350 or
-IcePi Zero): drive the serial protocol above from the board's controller and
-check the ciphertext against the NIST vectors.
+The `fpga` workflow (`.github/workflows/fpga.yaml`, manual dispatch) builds an ICE40UP5K bitstream. For physical testing, drive the serial protocol from a Tiny Tapeout dev board (RP2350 or IcePi Zero) and check the ciphertext against the NIST vectors.
 
 ## Inspiration
 
